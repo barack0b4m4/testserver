@@ -261,10 +261,10 @@ local function getDMMenuOptions(target, targetType, worldX, worldY, worldZ)
         end
     })
     
-    -- Object-specific options
+    -- Create POI - available for objects OR world clicks
     if targetType == "object" or targetType == "poi" then
         table.insert(options, {
-            label = "Create POI Here",
+            label = "Create POI From Object",
             action = function(t)
                 openPOICreator(t)
             end
@@ -283,30 +283,39 @@ local function getDMMenuOptions(target, targetType, worldX, worldY, worldZ)
                 toggleObjectSelection(t)
             end
         })
+    else
+        -- For non-object clicks, allow creating POI at world position
+        table.insert(options, {
+            label = "Create POI Here",
+            action = function(t, tt, pos)
+                openPOICreatorAtPosition(pos)
+            end
+        })
+    end
+    
+    -- POI-specific options
+    if targetType == "poi" then
+        table.insert(options, {
+            label = "Edit POI",
+            color = "FF66FF66",
+            action = function(t)
+                local poiID = getElementData(t, "poi.id")
+                if poiID then
+                    triggerServerEvent("poi:requestEdit", localPlayer, poiID)
+                end
+            end
+        })
         
-        if targetType == "poi" then
-            table.insert(options, {
-                label = "Edit POI",
-                color = "FF66FF66",
-                action = function(t)
-                    local poiID = getElementData(t, "poi.id")
-                    if poiID then
-                        triggerServerEvent("poi:requestEdit", localPlayer, poiID)
-                    end
+        table.insert(options, {
+            label = "Delete POI",
+            color = "FFFF6666",
+            action = function(t)
+                local poiID = getElementData(t, "poi.id")
+                if poiID then
+                    triggerServerEvent("poi:delete", localPlayer, poiID)
                 end
-            })
-            
-            table.insert(options, {
-                label = "Delete POI",
-                color = "FFFF6666",
-                action = function(t)
-                    local poiID = getElementData(t, "poi.id")
-                    if poiID then
-                        triggerServerEvent("poi:delete", localPlayer, poiID)
-                    end
-                end
-            })
-        end
+            end
+        })
     end
     
     -- NPC/Ped options
@@ -746,10 +755,12 @@ function openPOICreator(targetObject)
         y = y + 30
         
         poiElements.targetObject = targetObject
+        poiElements.worldPos = nil
     else
         guiCreateLabel(15, y, 360, 20, "POI will be created at your current position", false, poiWindow)
         y = y + 30
         poiElements.targetObject = nil
+        poiElements.worldPos = nil
     end
     
     -- Description
@@ -759,7 +770,7 @@ function openPOICreator(targetObject)
     y = y + 130
     
     -- Highlight option
-    poiElements.highlightCheck = guiCreateCheckBox(15, y, 200, 20, "Highlight this object", true, false, poiWindow)
+    poiElements.highlightCheck = guiCreateCheckBox(15, y, 200, 20, "Highlight this location", true, false, poiWindow)
     y = y + 35
     
     -- Buttons
@@ -785,11 +796,89 @@ function openPOICreator(targetObject)
         if poiElements.targetObject and isElement(poiElements.targetObject) then
             posX, posY, posZ = getElementPosition(poiElements.targetObject)
             modelID = getElementModel(poiElements.targetObject)
+        elseif poiElements.worldPos then
+            posX, posY, posZ = poiElements.worldPos.x, poiElements.worldPos.y, poiElements.worldPos.z
         else
             posX, posY, posZ = getElementPosition(localPlayer)
         end
         
         triggerServerEvent("poi:create", localPlayer, name, description, posX, posY, posZ, modelID, highlight)
+        
+        closePOIWindow()
+    end, false)
+    
+    addEventHandler("onClientGUIClick", poiElements.cancelBtn, function()
+        closePOIWindow()
+    end, false)
+    
+    showCursor(true)
+    guiSetInputMode("no_binds_when_editing")
+end
+
+function openPOICreatorAtPosition(worldPos)
+    if poiWindow and isElement(poiWindow) then
+        destroyElement(poiWindow)
+    end
+    
+    closeContextMenu()
+    editingPOI = nil
+    
+    local w, h = 400, 320
+    poiWindow = guiCreateWindow((screenW - w) / 2, (screenH - h) / 2, w, h, "Create Point of Interest", false)
+    guiWindowSetSizable(poiWindow, false)
+    
+    local y = 30
+    
+    -- POI Name
+    guiCreateLabel(15, y, 100, 20, "POI Name:", false, poiWindow)
+    poiElements.nameEdit = guiCreateEdit(120, y, 260, 25, "", false, poiWindow)
+    y = y + 35
+    
+    -- Position info
+    guiCreateLabel(15, y, 100, 20, "Position:", false, poiWindow)
+    local posText = worldPos and string.format("%.1f, %.1f, %.1f", worldPos.x, worldPos.y, worldPos.z) or "Your current position"
+    guiCreateLabel(120, y, 260, 20, posText, false, poiWindow)
+    guiLabelSetColor(guiCreateLabel(120, y, 260, 20, posText, false, poiWindow), 150, 255, 150)
+    y = y + 30
+    
+    poiElements.targetObject = nil
+    poiElements.worldPos = worldPos
+    
+    -- Description
+    guiCreateLabel(15, y, 100, 20, "Description:", false, poiWindow)
+    y = y + 25
+    poiElements.descMemo = guiCreateMemo(15, y, 370, 100, "Describe what players will see when they examine this...", false, poiWindow)
+    y = y + 110
+    
+    -- Highlight option
+    poiElements.highlightCheck = guiCreateCheckBox(15, y, 200, 20, "Show marker at location", true, false, poiWindow)
+    y = y + 35
+    
+    -- Buttons
+    poiElements.createBtn = guiCreateButton(15, y, 175, 35, "Create POI", false, poiWindow)
+    guiSetProperty(poiElements.createBtn, "NormalTextColour", "FF66FF66")
+    
+    poiElements.cancelBtn = guiCreateButton(210, y, 175, 35, "Cancel", false, poiWindow)
+    
+    -- Event handlers
+    addEventHandler("onClientGUIClick", poiElements.createBtn, function()
+        local name = guiGetText(poiElements.nameEdit)
+        if not name or name == "" then
+            outputChatBox("Please enter a POI name", 255, 100, 100)
+            return
+        end
+        
+        local description = guiGetText(poiElements.descMemo)
+        local highlight = guiCheckBoxGetSelected(poiElements.highlightCheck)
+        
+        local posX, posY, posZ
+        if poiElements.worldPos then
+            posX, posY, posZ = poiElements.worldPos.x, poiElements.worldPos.y, poiElements.worldPos.z
+        else
+            posX, posY, posZ = getElementPosition(localPlayer)
+        end
+        
+        triggerServerEvent("poi:create", localPlayer, name, description, posX, posY, posZ, nil, highlight)
         
         closePOIWindow()
     end, false)

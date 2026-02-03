@@ -638,6 +638,61 @@ end)
 -- COMMANDS
 --------------------------------------------------------------------------------
 
+addCommandHandler("givemoney", function(player, cmd, targetName, amount)
+    -- Check if DM
+    if not isDungeonMaster or not isDungeonMaster(player) then
+        outputChatBox("You must be a Dungeon Master to use this command", player, 255, 0, 0)
+        return
+    end
+    
+    if not targetName or not amount then
+        outputChatBox("Usage: /givemoney [player name] [amount]", player, 255, 255, 0)
+        return
+    end
+    
+    amount = tonumber(amount)
+    if not amount or amount < 1 then
+        outputChatBox("Invalid amount", player, 255, 0, 0)
+        return
+    end
+    
+    -- Find target player
+    local targetPlayer = nil
+    for _, p in ipairs(getElementsByType("player")) do
+        local pName = getElementData(p, "character.name") or getPlayerName(p)
+        if string.lower(pName):find(string.lower(targetName)) then
+            targetPlayer = p
+            break
+        end
+    end
+    
+    if not targetPlayer then
+        outputChatBox("Player not found", player, 255, 0, 0)
+        return
+    end
+    
+    -- Get target's character
+    local char = AccountManager:getActiveCharacter(targetPlayer)
+    if not char then
+        outputChatBox("Target player has no active character", player, 255, 0, 0)
+        return
+    end
+    
+    -- Give money
+    local currentMoney = getPlayerMoney(targetPlayer)
+    setPlayerMoney(targetPlayer, currentMoney + amount)
+    char.money = getPlayerMoney(targetPlayer)
+    
+    -- Notify both players
+    local targetCharName = getElementData(targetPlayer, "character.name") or getPlayerName(targetPlayer)
+    local dmName = getElementData(player, "character.name") or getPlayerName(player)
+    
+    outputChatBox("You gave $" .. amount .. " to " .. targetCharName, player, 0, 255, 0)
+    outputChatBox("The Dungeon Master gave you $" .. amount, targetPlayer, 0, 255, 0)
+    
+    outputServerLog("[DM] " .. dmName .. " gave $" .. amount .. " to " .. targetCharName)
+end)
+
 addCommandHandler("stats", function(p)
     local c = AccountManager:getActiveCharacter(p)
     if not c then 

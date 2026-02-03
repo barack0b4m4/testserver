@@ -1,32 +1,126 @@
-<meta>
-    <info author="YourName" type="gamemode" name="D&D RP Gamemode" version="2.3" />
+<!--
+================================================================================
+    D&D RP GAMEMODE FOR MTA:SA - RESOURCE DEFINITION
+================================================================================
+    This meta.xml defines all scripts and their load order.
     
-    <!-- Core server file (MUST load first) -->
+    IMPORTANT: Server scripts must load in dependency order:
+    1. server.lua           - Core framework (database, accounts, characters)
+    2. inventory_system.lua - Item definitions and inventory management
+    3. dice_system.lua      - D&D dice rolling and skill checks
+    4. dungeon_master.lua   - DM permissions and NPC management
+    5. shopkeeper_system.lua- Shop NPCs and trading
+    6. crafting_system.lua  - Recipe-based crafting
+    7. proximity_chat.lua   - RP chat system
+    8. property_system.lua  - Property/interior management
+    9. server_interaction.lua - POI and interaction handlers
+    
+    Client scripts can load in any order after their dependencies.
+================================================================================
+-->
+<meta>
+    <info author="Claude AI" version="2.0" type="gamemode" name="D&D RP Gamemode" 
+          description="D&D-style roleplay gamemode with stats, inventory, crafting, properties, and DM tools" />
+    
+    <!-- ================================================================== -->
+    <!-- SERVER SCRIPTS - Load in dependency order                          -->
+    <!-- ================================================================== -->
+    
+    <!-- Core Framework: Database, Accounts, Characters, D&D Stats -->
+    <!-- GLOBAL EXPORTS: database, AccountManager, Account, Character -->
     <script src="server.lua" type="server" />
     
-    <!-- Game systems -->
+    <!-- Inventory System: Items, Equipment, Consumables -->
+    <!-- DEPENDS ON: server.lua (database) -->
+    <!-- GLOBAL EXPORTS: ItemRegistry, PlayerInventories, inventory functions -->
     <script src="inventory_system.lua" type="server" />
-    <script src="crafting_system.lua" type="server" />
+    
+    <!-- Dice System: D&D-style dice rolling, skill checks, saving throws -->
+    <!-- DEPENDS ON: server.lua (AccountManager for character stats) -->
     <script src="dice_system.lua" type="server" />
+    
+    <!-- Dungeon Master System: DM permissions, NPCs, forced rolls -->
+    <!-- DEPENDS ON: server.lua (database, AccountManager) -->
+    <!-- GLOBAL EXPORTS: isDungeonMaster(), NPCs table -->
     <script src="dungeon_master.lua" type="server" />
+    
+    <!-- Shopkeeper System: Shop NPCs, buy/sell, CHA price modifiers -->
+    <!-- DEPENDS ON: server.lua, inventory_system.lua, dungeon_master.lua -->
+    <!-- GLOBAL EXPORTS: Shops table, shop functions -->
     <script src="shopkeeper_system.lua" type="server" />
+    
+    <!-- Crafting System: Recipes, material requirements, tool requirements -->
+    <!-- DEPENDS ON: server.lua (database), inventory_system.lua (ItemRegistry) -->
+    <!-- GLOBAL EXPORTS: CraftingRecipes table, crafting functions -->
+    <script src="crafting_system.lua" type="server" />
+    
+    <!-- Proximity Chat: RP chat with ranges, /me, /do, /whisper, etc. -->
+    <!-- DEPENDS ON: server.lua (AccountManager for character names) -->
     <script src="proximity_chat.lua" type="server" />
+    
+    <!-- Property System: Building interiors, ownership, entry/exit -->
+    <!-- DEPENDS ON: server.lua (database, AccountManager) -->
+    <!-- GLOBAL EXPORTS: Properties, PropertyMarkers, createProperty() -->
     <script src="property_system.lua" type="server" />
+    
+    <!-- Interaction System Server: POIs, examination, descriptions -->
+    <!-- DEPENDS ON: server.lua, dungeon_master.lua, property_system.lua -->
+    <!-- GLOBAL EXPORTS: PointsOfInterest table -->
     <script src="server_interaction.lua" type="server" />
     
-    <!-- Client-side GUI files -->
+    <!-- Economic System: Markets, Companies, Employees -->
+    <!-- DEPENDS ON: server.lua, inventory_system.lua, dungeon_master.lua -->
+    <!-- GLOBAL EXPORTS: GlobalEconomy, Companies, Deals, EconomyConfig -->
+    <script src="economic_system.lua" type="server" />
+    
+    <!-- Economic Cycle: Deal execution, production, wages -->
+    <!-- DEPENDS ON: economic_system.lua -->
+    <script src="economic_cycle.lua" type="server" />
+    
+    <!-- ================================================================== -->
+    <!-- CLIENT SCRIPTS - GUI and client-side features                      -->
+    <!-- ================================================================== -->
+    
+    <!-- Login/Register GUI -->
     <script src="client_login.lua" type="client" />
+    
+    <!-- Character Selection GUI -->
     <script src="client_char_select.lua" type="client" />
+    
+    <!-- Character Creation GUI (with D&D point-buy stats) -->
     <script src="client_char_create.lua" type="client" />
+    
+    <!-- Shop GUI (buying/selling interface) -->
     <script src="client_shop.lua" type="client" />
+    
+    <!-- Item Creator GUI (DM tool for creating items) -->
     <script src="client_item_creator.lua" type="client" />
+    
+    <!-- Crafting GUI (player crafting + DM recipe editor) -->
     <script src="client_crafting.lua" type="client" />
+    
+    <!-- Interaction System (right-click menus, POI GUI, property creator) -->
     <script src="client_interaction.lua" type="client" />
+    
+    <!-- Economy GUI (company management, deals, production) -->
+    <script src="client_economy.lua" type="client" />
+    
+    <!-- NPC Name Display (shows names above NPC heads) -->
     <script src="client_npc_names.lua" type="client" />
+    
+    <!-- Property Interaction (enter/exit properties) -->
     <script src="client_property.lua" type="client" />
+    
+    <!-- DM Flying Mode (noclip for DMs) -->
     <script src="client_dmfly.lua" type="client" />
     
-    <!-- Database and config -->
-    <file src="serverdata.db" />
-    <config src="mtaserver.conf" type="server" />
+    <!-- ================================================================== -->
+    <!-- RESOURCE SETTINGS                                                  -->
+    <!-- ================================================================== -->
+    
+    <!-- Minimum client version required -->
+    <min_mta_version client="1.5.0" server="1.5.0" />
+    
+    <!-- OOP disabled (using procedural style) -->
+    <oop>false</oop>
 </meta>

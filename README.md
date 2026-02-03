@@ -1,5 +1,69 @@
 # D&D RP Gamemode for MTA:SA
 
+## System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           SERVER SCRIPTS                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌──────────────────┐                                                       │
+│  │    server.lua    │  ◄── Core: Database, Accounts, Characters, Stats     │
+│  │  (LOADS FIRST)   │                                                       │
+│  └────────┬─────────┘                                                       │
+│           │                                                                 │
+│           ▼                                                                 │
+│  ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐    │
+│  │inventory_system  │────►│ crafting_system  │     │   dice_system    │    │
+│  │  Items, Equip    │     │ Recipes, Craft   │     │  Rolls, Checks   │    │
+│  └────────┬─────────┘     └──────────────────┘     └──────────────────┘    │
+│           │                                                                 │
+│           ▼                                                                 │
+│  ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐    │
+│  │ dungeon_master   │────►│shopkeeper_system │     │ proximity_chat   │    │
+│  │  DM Perms, NPCs  │     │  Shops, Trading  │     │  RP Chat System  │    │
+│  └────────┬─────────┘     └──────────────────┘     └──────────────────┘    │
+│           │                                                                 │
+│           ▼                                                                 │
+│  ┌──────────────────┐     ┌──────────────────┐                             │
+│  │ property_system  │────►│server_interaction│                             │
+│  │  Properties      │     │  POIs, Examine   │                             │
+│  └──────────────────┘     └──────────────────┘                             │
+│                                                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                           CLIENT SCRIPTS                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐          │
+│  │  client_login    │  │client_char_select│  │client_char_create│          │
+│  │  Login/Register  │  │  Char Selection  │  │  Point-Buy Stats │          │
+│  └──────────────────┘  └──────────────────┘  └──────────────────┘          │
+│                                                                             │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐          │
+│  │   client_shop    │  │client_item_create│  │ client_crafting  │          │
+│  │  Shop GUI        │  │  Item Creator    │  │  Craft + Recipes │          │
+│  └──────────────────┘  └──────────────────┘  └──────────────────┘          │
+│                                                                             │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐          │
+│  │client_interaction│  │ client_property  │  │  client_dmfly    │          │
+│  │Right-click Menus │  │  Enter/Exit      │  │  DM Flying Mode  │          │
+│  └──────────────────┘  └──────────────────┘  └──────────────────┘          │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+## Key Integration Points
+
+| System | Depends On | Provides To |
+|--------|------------|-------------|
+| server.lua | - | database, AccountManager, Character stats |
+| inventory_system | server.lua | ItemRegistry, PlayerInventories |
+| dungeon_master | server.lua | isDungeonMaster(), NPCs |
+| shopkeeper_system | inventory_system, dungeon_master | Shops, shop functions |
+| crafting_system | inventory_system | CraftingRecipes |
+| property_system | server.lua | Properties, createProperty() |
+| server_interaction | property_system, dungeon_master | POIs, examineTarget() |
+
 ## Commands Reference
 
 ### Character Commands
@@ -146,6 +210,58 @@
 | `/respawnshop [shopID]` | Respawn shop NPC |
 | `/shopadditem [shopID] [itemID] [price] [stock]` | Quick-add item to shop |
 
+### Interaction System (client_interaction.lua / server_interaction.lua)
+
+**Right-Click Context Menus:**
+Players and DMs can right-click on objects, NPCs, players, and the world to get context-sensitive menus.
+
+**Player Menu Options:**
+| Target | Options |
+|--------|---------|
+| Shopkeeper | Talk/Shop, Examine |
+| NPC | Talk, Examine |
+| Player | Wave, Examine |
+| Property Entrance | Enter Property, Examine |
+| POI | Examine |
+| Vehicle | Enter Vehicle, Examine |
+
+**DM Menu Options (when in DM Mode via `/dm`):**
+| Option | Description |
+|--------|-------------|
+| Set Property Entrance Here | Mark location for property entrance |
+| Teleport Here | Instantly move to clicked location |
+| Create POI Here | Open POI creation GUI at this object |
+| Toggle Highlight | Highlight/unhighlight object (visual feedback) |
+| Toggle Selection | Select/deselect object for batch operations |
+| Set Description | Set examine text for NPCs/players/objects |
+| Edit POI | Edit existing Point of Interest |
+| Delete POI | Remove Point of Interest |
+| Create Property Here | Open property creation GUI |
+
+**Points of Interest (POIs):**
+DMs can create examinable points in the world that players can interact with.
+- Right-click object → "Create POI Here"
+- Name and description visible when examined
+- Optional highlight marker (glowing corona)
+- Persists in database
+
+**Property Creation GUI:**
+DMs can right-click anywhere and select "Create Property Here" to open a visual property creator with:
+- Property name input
+- Interior type dropdown (40+ GTA:SA interiors)
+- Price setting
+- For sale toggle
+- Description field
+- Position display
+
+**DM POI/Interaction Commands:**
+| Command | Description |
+|---------|-------------|
+| `/setpropertyentrance [propID]` | Apply pending entrance position to property |
+| `/listpois [search]` | List all Points of Interest |
+| `/gotopoi [poiID]` | Teleport to a POI |
+| `/clearselection` | Deselect all selected objects |
+
 **Shop GUI Features:**
 - **Players**: Click shopkeeper to open shop, browse items, purchase
 - **DMs**: Enable DM mode (`/dm`), then click shopkeeper to edit:
@@ -200,22 +316,95 @@ Calculated as: `floor((stat - 10) / 2)`
 - **Epic** (Purple)
 - **Legendary** (Orange)
 
+## Economic System
+
+### Overview
+A comprehensive economic simulation with:
+- **Closed Economy**: All money originates from market pools
+- **24-Hour Cycles**: Economic activities process daily
+- **Player-Driven Markets**: NPC companies provide baseline infrastructure
+- **Labor-Based Production**: All production requires employee labor power
+
+### Market Tiers
+| Tier | Initial Value | Purpose |
+|------|---------------|---------|
+| Global | $78 Trillion | International trade (100,000+ units) |
+| National | $22 Trillion | Nationwide trade (1,000+ units) |
+| State | $800 Billion | Local/retail (any quantity) |
+
+### Company Types
+| Type | Function | Employees Produce |
+|------|----------|-------------------|
+| Resource | Extract raw materials | Items from labor only |
+| Manufacturing | Process materials with recipes | Items from inputs |
+| Retail | Sell to state market | Revenue from sales |
+| Tech | Generate points | Efficiency/Innovation |
+
+### Employee Types
+| Type | Wage Minimum | Labor Allocation |
+|------|--------------|------------------|
+| Unskilled | $100/cycle | Items or Logistics |
+| Skilled | $250/cycle | Items or Logistics (1.25x efficiency) |
+| Professional | $500/cycle | Efficiency or Innovation |
+
+### Company Points
+- **Money**: Cash for wages, purchases, deals
+- **Efficiency**: Multiplies production output
+- **Innovation**: Spent on company perks/upgrades
+- **Logistics**: Required for deal execution
+
+### Commands
+
+**Player Commands:**
+| Command | Description |
+|---------|-------------|
+| `F6` or `/company` | Open company management GUI |
+| `/acceptjob` | Accept pending job offer |
+| `/declinejob` | Decline pending job offer |
+
+**DM Commands:**
+| Command | Description |
+|---------|-------------|
+| `/forcecycle` | Force end-of-cycle processing |
+| `/economystatus` | View market values and stats |
+| `/createcompany "Name" type [capital]` | Create NPC company |
+| `/listcompanies` | List all companies |
+
+### 24-Hour Cycle Processing
+1. **Labor Deposit**: Employees contribute 8 LP each
+2. **Production**: Companies produce based on labor and recipes
+3. **Deal Execution**: Inter-company trades process
+4. **Retail Sales**: Retail companies sell 5-15% of stock to state market
+5. **Wage Payment**: Employee wages paid (NPC wages return to market)
+6. **Profit Return**: NPC company profits return to state market
+
+### Deal System
+- Companies can create recurring trade agreements
+- Deals require logistics capacity to execute
+- Both parties must have required resources
+- Duration can be infinite or limited cycles
+
 ## File Structure
 ```
-├── server.lua              # Core server (database, accounts, characters)
+├── server.lua              # Core server (database, accounts, characters, D&D stats)
 ├── inventory_system.lua    # Dynamic item creation & inventory management
 ├── crafting_system.lua     # Recipe-based crafting system
 ├── dice_system.lua         # Dice rolling and skill checks
 ├── dungeon_master.lua      # DM tools for NPCs and forced rolls
 ├── shopkeeper_system.lua   # Shopkeeper NPCs with persistent inventory
 ├── proximity_chat.lua      # RP chat with ranges
-├── property_system.lua     # Property/interior system
+├── property_system.lua     # Property/interior system with 85 presets
+├── server_interaction.lua  # POI management, descriptions, interaction handlers
+├── economic_system.lua     # Core economy: markets, companies, employees
+├── economic_cycle.lua      # 24-hour cycle processing, deals, production
 ├── client_login.lua        # Login/register GUI
 ├── client_char_select.lua  # Character selection GUI
 ├── client_char_create.lua  # Character creation with stat allocation
 ├── client_shop.lua         # Shop GUI for buying/editing
 ├── client_item_creator.lua # DM item creation GUI
-├── client_crafting.lua     # Player crafting GUI
+├── client_crafting.lua     # Player crafting + DM recipe editor GUI
+├── client_interaction.lua  # Right-click menus, POI GUI, property creator GUI
+├── client_economy.lua      # Company management GUI
 ├── client_npc_names.lua    # NPC name display above heads
 ├── client_property.lua     # Property interaction client
 ├── client_dmfly.lua        # DM flying mode
