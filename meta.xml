@@ -1,0 +1,32 @@
+<meta>
+    <info author="YourName" type="gamemode" name="D&D RP Gamemode" version="2.3" />
+    
+    <!-- Core server file (MUST load first) -->
+    <script src="server.lua" type="server" />
+    
+    <!-- Game systems -->
+    <script src="inventory_system.lua" type="server" />
+    <script src="crafting_system.lua" type="server" />
+    <script src="dice_system.lua" type="server" />
+    <script src="dungeon_master.lua" type="server" />
+    <script src="shopkeeper_system.lua" type="server" />
+    <script src="proximity_chat.lua" type="server" />
+    <script src="property_system.lua" type="server" />
+    <script src="server_interaction.lua" type="server" />
+    
+    <!-- Client-side GUI files -->
+    <script src="client_login.lua" type="client" />
+    <script src="client_char_select.lua" type="client" />
+    <script src="client_char_create.lua" type="client" />
+    <script src="client_shop.lua" type="client" />
+    <script src="client_item_creator.lua" type="client" />
+    <script src="client_crafting.lua" type="client" />
+    <script src="client_interaction.lua" type="client" />
+    <script src="client_npc_names.lua" type="client" />
+    <script src="client_property.lua" type="client" />
+    <script src="client_dmfly.lua" type="client" />
+    
+    <!-- Database and config -->
+    <file src="serverdata.db" />
+    <config src="mtaserver.conf" type="server" />
+</meta>
