@@ -1,3 +1,58 @@
+--[[
+================================================================================
+    SHOPKEEPER_SYSTEM.LUA - NPC Shop System
+================================================================================
+    Creates and manages shopkeeper NPCs with persistent inventories.
+    Players can buy items from shops with prices modified by CHA stat.
+    
+    FEATURES:
+    - Persistent shop inventories stored in database
+    - Shopkeeper NPCs with custom names and skins
+    - CHA-based price modifiers (high CHA = cheaper prices)
+    - Stock tracking (limited or unlimited)
+    - DM GUI for shop/inventory management
+    - Click-to-interact shop opening
+    
+    INTEGRATION POINTS:
+    ┌─────────────────────────────────────────────────────────────────────────┐
+    │ DEPENDS ON:                                                             │
+    │   - server.lua: database, AccountManager, Character stat system         │
+    │   - inventory_system.lua: ItemRegistry, addItemToInventory()            │
+    │   - dungeon_master.lua: isDungeonMaster() for shop management           │
+    │                                                                         │
+    │ PROVIDES TO:                                                            │
+    │   - client_shop.lua: Shop data and purchase handling                    │
+    │   - client_interaction.lua: Shop interaction via context menu           │
+    │                                                                         │
+    │ GLOBAL EXPORTS:                                                         │
+    │   - Shops: Table of all shops keyed by ID                               │
+    │   - ShopNPCs: Table of shopkeeper ped elements                          │
+    │   - createShop(name, skinID, x, y, z, ...)                              │
+    │   - deleteShop(shopID)                                                  │
+    │   - addItemToShop(shopID, itemID, price, stock)                         │
+    │   - purchaseFromShop(player, shopID, itemID, qty)                       │
+    └─────────────────────────────────────────────────────────────────────────┘
+    
+    PRICE CALCULATION:
+    Final Price = Base Price × CHA Modifier
+    CHA Modifier = 1.0 - (CHA_Modifier × 0.05)
+    Example: CHA 18 (+4 mod) = 0.80× prices (20% discount)
+    Example: CHA 8 (-1 mod) = 1.05× prices (5% markup)
+    
+    DM COMMANDS:
+    - /createshop "Name" [skinID]
+    - /deleteshop shopID
+    - /editshop shopID [options]
+    - /listshops
+    - /gotoshop shopID
+    - /moveshop shopID
+    - /respawnshop shopID
+    - /shopadditem shopID itemID price [stock]
+    - /shopremoveitem shopID itemID
+    - /shopgui shopID - Open shop editor GUI
+================================================================================
+]]
+
 -- shopkeeper_system.lua (SERVER)
 -- Shopkeeper NPC system with persistent inventory and DM management
 -- Now integrates with CHA stat for price modifiers!
@@ -333,6 +388,9 @@ function purchaseItem(player, shopID, itemID, quantity)
         return false, "Not enough stock (only " .. shopItem.stock .. " left)"
     end
     
+    -- Get item definition
+    local itemDef = ItemRegistry and ItemRegistry:get(itemID)
+    
     -- Apply CHA price modifier
     local basePrice = shopItem.price
     local priceModifier = getPlayerPriceModifier(player)
@@ -344,6 +402,47 @@ function purchaseItem(player, shopID, itemID, quantity)
         return false, "Not enough money (need $" .. totalPrice .. ", have $" .. playerMoney .. ")"
     end
     
+    -- Check if this is a vehicle item
+    if itemDef and itemDef.category == "vehicle" then
+        -- Vehicle items spawn as owned vehicles, not added to inventory
+        if not spawnVehicleFromItem then
+            return false, "Vehicle system not available"
+        end
+        
+        -- Get vehicle model ID from item's vehicleID/weaponID field (repurposed for vehicle model)
+        local modelID = itemDef.weaponID
+        if not modelID then
+            return false, "Invalid vehicle item (no model ID)"
+        end
+        
+        -- Spawn one vehicle per purchase
+        for i = 1, quantity do
+            local vehicleID, err = spawnVehicleFromItem(player, itemID, modelID)
+            if not vehicleID then
+                return false, err or "Failed to spawn vehicle"
+            end
+        end
+        
+        takePlayerMoney(player, totalPrice)
+        
+        if shopItem.stock ~= -1 then
+            shop.items[shopItemIndex].stock = shopItem.stock - quantity
+            dbExec(db, "UPDATE shop_inventory SET stock=? WHERE shop_id=? AND item_id=?",
+                shop.items[shopItemIndex].stock, shopID, itemID)
+        end
+        
+        local itemName = itemDef.name or itemID
+        local discountPercent = math.floor((1 - priceModifier) * 100)
+        
+        local purchaseMsg = "Purchased " .. quantity .. "x " .. itemName .. " for $" .. totalPrice .. " (spawned outside)"
+        if discountPercent > 0 then
+            purchaseMsg = purchaseMsg .. " (" .. discountPercent .. "% CHA discount!)"
+        end
+        
+        return true, purchaseMsg
+    end
+    
+    -- Standard item purchase (add to inventory)
     local inv = getPlayerInventory(player)
     if not inv then return false, "No inventory" end
     
@@ -358,7 +457,7 @@ function purchaseItem(player, shopID, itemID, quantity)
             shop.items[shopItemIndex].stock, shopID, itemID)
     end
     
-    local itemName = ItemRegistry and ItemRegistry:get(itemID) and ItemRegistry:get(itemID).name or itemID
+    local itemName = itemDef and itemDef.name or itemID
     local discountPercent = math.floor((1 - priceModifier) * 100)
     
     local purchaseMsg = "Purchased " .. quantity .. "x " .. itemName .. " for $" .. totalPrice

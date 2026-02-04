@@ -105,27 +105,33 @@ function loadAllPOIs()
 end
 
 function spawnPOIMarker(poi)
-    -- Create a small invisible marker for POI detection
-    -- Or find existing object at that location
+    -- Create an invisible marker for POI detection
+    -- Alpha = 0 (invisible) - we detect these manually in client click handler
+    -- since processLineOfSight doesn't see markers
     
     local marker = createMarker(poi.position.x, poi.position.y, poi.position.z - 1, "cylinder", 1.5, 255, 200, 0, 0)
     
     if marker then
         setElementDimension(marker, poi.dimension)
         setElementInterior(marker, poi.interior)
-        setElementData(marker, "isPOI", true)
+        setElementData(marker, "isPOI", "true")  -- Use string for consistency
         setElementData(marker, "poi.id", poi.id)
         setElementData(marker, "poi.name", poi.name)
         setElementData(marker, "description", poi.description)
         
         poi.marker = marker
         
-        -- Create visible marker if highlighted
+        -- Create visible highlight marker if highlighted
         if poi.highlighted then
             local corona = createMarker(poi.position.x, poi.position.y, poi.position.z, "corona", 1.0, 255, 200, 0, 100)
             if corona then
                 setElementDimension(corona, poi.dimension)
                 setElementInterior(corona, poi.interior)
+                -- Corona also gets POI data so it can be clicked
+                setElementData(corona, "isPOI", "true")
+                setElementData(corona, "poi.id", poi.id)
+                setElementData(corona, "poi.name", poi.name)
+                setElementData(corona, "description", poi.description)
                 poi.corona = corona
             end
         end
@@ -191,7 +197,7 @@ function updatePOI(poiID, name, description, highlighted)
         UPDATE points_of_interest SET name = ?, description = ?, highlighted = ? WHERE id = ?
     ]], poi.name, poi.description, highlighted and 1 or 0, poiID)
     
-    -- Update marker data
+    -- Update marker data (with sync enabled)
     if poi.marker and isElement(poi.marker) then
         setElementData(poi.marker, "poi.name", poi.name)
         setElementData(poi.marker, "description", poi.description)
@@ -203,6 +209,11 @@ function updatePOI(poiID, name, description, highlighted)
         if corona then
             setElementDimension(corona, poi.dimension)
             setElementInterior(corona, poi.interior)
+            -- Corona also gets POI data so it can be clicked
+            setElementData(corona, "isPOI", "true")
+            setElementData(corona, "poi.id", poi.id)
+            setElementData(corona, "poi.name", poi.name)
+            setElementData(corona, "description", poi.description)
             poi.corona = corona
         end
     elseif not highlighted and poi.corona then
@@ -210,6 +221,10 @@ function updatePOI(poiID, name, description, highlighted)
             destroyElement(poi.corona)
         end
         poi.corona = nil
+    elseif highlighted and poi.corona and isElement(poi.corona) then
+        -- Update existing corona data
+        setElementData(poi.corona, "poi.name", poi.name, true)
+        setElementData(poi.corona, "description", poi.description, true)
     end
     
     return true, "POI updated"

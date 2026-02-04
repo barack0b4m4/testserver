@@ -53,10 +53,6 @@ local function formatNumber(num)
     end
 end
 
-local function isPlayerDM()
-    return getElementData(localPlayer, "isDungeonMaster") == true
-end
-
 --------------------------------------------------------------------------------
 -- WINDOW MANAGEMENT
 --------------------------------------------------------------------------------
@@ -531,17 +527,45 @@ buildProductionTab = function()
     local y = 10
     
     if company.type == "resource" then
-        guiCreateLabel(10, y, 500, 20, "Resource companies extract raw materials using labor power.", false, panel)
-        y = y + 30
-        guiCreateLabel(10, y, 500, 20, "Current production: " .. (company.autoProduceItem or "Not set"), false, panel)
+        guiCreateLabel(10, y, 550, 20, "Resource companies extract raw materials using labor power.", false, panel)
+        y = y + 25
+        guiCreateLabel(10, y, 550, 20, "Assign employees to 'Items' allocation to gather resources.", false, panel)
         y = y + 30
         
+        guiCreateLabel(10, y, 150, 20, "Current Production:", false, panel)
+        guiCreateLabel(160, y, 300, 20, company.autoProduceItem or "Not set - select below", false, panel)
+        y = y + 30
+        
+        -- Resource item selector (available to all owners)
+        guiCreateLabel(10, y, 120, 20, "Produce Item:", false, panel)
+        local itemCombo = guiCreateComboBox(130, y - 2, 250, 200, "-- Select Resource --", false, panel)
+        
+        -- Populate with available resource items
+        if company.availableResources then
+            for i, item in ipairs(company.availableResources) do
+                guiComboBoxAddItem(itemCombo, item.name .. " (" .. item.id .. ")")
+            end
+        end
+        
+        local setBtn = guiCreateButton(390, y - 2, 80, 24, "Set", false, panel)
+        local companyID = company.id
+        addEventHandler("onClientGUIClick", setBtn, function()
+            local idx = guiComboBoxGetSelected(itemCombo)
+            if idx >= 0 and company.availableResources and company.availableResources[idx + 1] then
+                local itemID = company.availableResources[idx + 1].id
+                triggerServerEvent("economy:setProduction", localPlayer, companyID, "resource", itemID)
+            else
+                outputChatBox("Select a resource to produce", 255, 100, 100)
+            end
+        end, false)
+        y = y + 35
+        
+        -- DM can also manually enter item ID
         if isDMView then
-            guiCreateLabel(10, y, 100, 20, "Set Item ID:", false, panel)
-            local itemEdit = guiCreateEdit(120, y - 2, 150, 24, company.autoProduceItem or "", false, panel)
-            local setBtn = guiCreateButton(280, y - 2, 60, 24, "Set", false, panel)
-            local companyID = company.id
-            addEventHandler("onClientGUIClick", setBtn, function()
+            guiCreateLabel(10, y, 150, 20, "Or enter Item ID:", false, panel)
+            local itemEdit = guiCreateEdit(160, y - 2, 150, 24, "", false, panel)
+            local setBtn2 = guiCreateButton(320, y - 2, 60, 24, "Set", false, panel)
+            addEventHandler("onClientGUIClick", setBtn2, function()
                 local itemID = guiGetText(itemEdit)
                 if itemID and itemID ~= "" then
                     triggerServerEvent("economy:setProduction", localPlayer, companyID, "resource", itemID)
@@ -550,17 +574,41 @@ buildProductionTab = function()
         end
         
     elseif company.type == "manufacturing" then
-        guiCreateLabel(10, y, 500, 20, "Manufacturing companies process materials using recipes.", false, panel)
-        y = y + 30
-        guiCreateLabel(10, y, 500, 20, "Active recipe: " .. (company.currentRecipe or "Not set"), false, panel)
+        guiCreateLabel(10, y, 550, 20, "Manufacturing companies process materials using recipes.", false, panel)
+        y = y + 25
+        guiCreateLabel(10, y, 550, 20, "Requires input materials in inventory and employees on 'Items' allocation.", false, panel)
         y = y + 30
         
+        guiCreateLabel(10, y, 150, 20, "Active Recipe:", false, panel)
+        guiCreateLabel(160, y, 300, 20, company.currentRecipe or "Not set", false, panel)
+        y = y + 30
+        
+        -- Recipe selector
+        guiCreateLabel(10, y, 100, 20, "Set Recipe:", false, panel)
+        local recipeCombo = guiCreateComboBox(110, y - 2, 250, 200, "-- Select Recipe --", false, panel)
+        
+        if company.availableRecipes then
+            for i, recipe in ipairs(company.availableRecipes) do
+                guiComboBoxAddItem(recipeCombo, recipe.name .. " (" .. recipe.id .. ")")
+            end
+        end
+        
+        local setBtn = guiCreateButton(370, y - 2, 80, 24, "Set", false, panel)
+        local companyID = company.id
+        addEventHandler("onClientGUIClick", setBtn, function()
+            local idx = guiComboBoxGetSelected(recipeCombo)
+            if idx >= 0 and company.availableRecipes and company.availableRecipes[idx + 1] then
+                local recipeID = company.availableRecipes[idx + 1].id
+                triggerServerEvent("economy:setProduction", localPlayer, companyID, "manufacturing", recipeID)
+            end
+        end, false)
+        y = y + 35
+        
         if isDMView then
-            guiCreateLabel(10, y, 100, 20, "Set Recipe ID:", false, panel)
-            local recipeEdit = guiCreateEdit(120, y - 2, 150, 24, company.currentRecipe or "", false, panel)
-            local setBtn = guiCreateButton(280, y - 2, 60, 24, "Set", false, panel)
-            local companyID = company.id
-            addEventHandler("onClientGUIClick", setBtn, function()
+            guiCreateLabel(10, y, 120, 20, "Or Recipe ID:", false, panel)
+            local recipeEdit = guiCreateEdit(130, y - 2, 150, 24, "", false, panel)
+            local setBtn2 = guiCreateButton(290, y - 2, 60, 24, "Set", false, panel)
+            addEventHandler("onClientGUIClick", setBtn2, function()
                 local recipeID = guiGetText(recipeEdit)
                 if recipeID and recipeID ~= "" then
                     triggerServerEvent("economy:setProduction", localPlayer, companyID, "manufacturing", recipeID)
@@ -570,8 +618,12 @@ buildProductionTab = function()
         
     elseif company.type == "tech" then
         guiCreateLabel(10, y, 550, 20, "Tech companies generate Efficiency and Innovation from professional employees.", false, panel)
+        y = y + 25
+        guiCreateLabel(10, y, 550, 20, "Assign professional employees to 'Efficiency' or 'Innovation' allocation.", false, panel)
     elseif company.type == "retail" then
         guiCreateLabel(10, y, 550, 20, "Retail companies sell inventory to State Market (5-15% consumed per cycle).", false, panel)
+        y = y + 25
+        guiCreateLabel(10, y, 550, 20, "Stock items in inventory to sell automatically each cycle.", false, panel)
     end
 end
 
@@ -626,22 +678,66 @@ buildDealsTab = function()
     end, false)
     y = y + 40
     
-    guiCreateLabel(10, y, 140, 20, "Partner", false, panel)
-    guiCreateLabel(160, y, 80, 20, "Status", false, panel)
-    guiCreateLabel(250, y, 120, 20, "Duration", false, panel)
+    -- Column headers
+    guiCreateLabel(10, y, 120, 20, "Partner", false, panel)
+    guiCreateLabel(135, y, 180, 20, "We Provide", false, panel)
+    guiCreateLabel(320, y, 180, 20, "They Provide", false, panel)
+    guiCreateLabel(505, y, 60, 20, "Status", false, panel)
     y = y + 22
     
     if company.deals and #company.deals > 0 then
         for _, deal in ipairs(company.deals) do
-            local partner = (deal.companyAID == company.id) and (deal.companyBName or "?") or (deal.companyAName or "?")
-            guiCreateLabel(10, y, 140, 20, partner, false, panel)
-            guiCreateLabel(160, y, 80, 20, deal.status or "?", false, panel)
-            guiCreateLabel(250, y, 120, 20, tostring(deal.duration or "infinite"), false, panel)
-            y = y + 22
+            local isCompanyA = (deal.companyAID == company.id)
+            local partner = isCompanyA and (deal.companyBName or "?") or (deal.companyAName or "?")
+            local weProvide = isCompanyA and deal.companyAProvides or deal.companyBProvides
+            local theyProvide = isCompanyA and deal.companyBProvides or deal.companyAProvides
+            
+            guiCreateLabel(10, y, 120, 20, partner, false, panel)
+            guiCreateLabel(135, y, 180, 20, formatDealContents(weProvide), false, panel)
+            guiCreateLabel(320, y, 180, 20, formatDealContents(theyProvide), false, panel)
+            guiCreateLabel(505, y, 60, 20, deal.status or "?", false, panel)
+            
+            -- Cancel button for active deals
+            if deal.status == "active" or deal.status == "pending" then
+                local dealID = deal.id
+                local cancelBtn = guiCreateButton(575, y - 2, 55, 22, "Cancel", false, panel)
+                addEventHandler("onClientGUIClick", cancelBtn, function()
+                    triggerServerEvent("economy:cancelDeal", localPlayer, dealID, companyID)
+                end, false)
+            end
+            
+            y = y + 24
         end
     else
         guiCreateLabel(10, y, 300, 20, "No active deals.", false, panel)
     end
+end
+
+-- Helper function to format deal contents for display
+function formatDealContents(provides)
+    if not provides then return "-" end
+    local parts = {}
+    
+    if provides.money and provides.money > 0 then
+        table.insert(parts, formatMoney(provides.money))
+    end
+    if provides.efficiency and provides.efficiency > 0 then
+        table.insert(parts, provides.efficiency .. " Eff")
+    end
+    if provides.innovation and provides.innovation > 0 then
+        table.insert(parts, provides.innovation .. " Inn")
+    end
+    if provides.logistics and provides.logistics > 0 then
+        table.insert(parts, provides.logistics .. " Log")
+    end
+    if provides.items then
+        for itemID, qty in pairs(provides.items) do
+            table.insert(parts, qty .. "x " .. itemID)
+        end
+    end
+    
+    if #parts == 0 then return "-" end
+    return table.concat(parts, ", ")
 end
 
 buildPerksTab = function()
@@ -903,47 +999,151 @@ local dealCreatorWindow = nil
 function openDealCreatorGUI(companyID, otherCompanies)
     if dealCreatorWindow then destroyElement(dealCreatorWindow) end
     
-    local w, h = 450, 380
+    -- Get current company's inventory for item selection
+    local myInventory = selectedCompanyData and selectedCompanyData.inventory or {}
+    
+    local w, h = 580, 620
     dealCreatorWindow = guiCreateWindow((screenW - w) / 2, (screenH - h) / 2, w, h, "Create Deal", false)
     guiWindowSetSizable(dealCreatorWindow, false)
     
     local y = 30
     
     guiCreateLabel(15, y, 120, 20, "Partner:", false, dealCreatorWindow)
-    local partnerCombo = guiCreateComboBox(120, y - 2, 300, 200, "", false, dealCreatorWindow)
+    local partnerCombo = guiCreateComboBox(120, y - 2, 430, 200, "", false, dealCreatorWindow)
     for _, c in ipairs(otherCompanies or {}) do
-        guiComboBoxAddItem(partnerCombo, c.name .. " (" .. c.type .. ")")
+        local tag = c.ownerType == "npc" and "[NPC] " or ""
+        guiComboBoxAddItem(partnerCombo, tag .. c.name .. " (" .. c.type .. ")")
     end
     if #(otherCompanies or {}) > 0 then guiComboBoxSetSelected(partnerCombo, 0) end
-    y = y + 35
+    y = y + 40
     
-    guiCreateLabel(15, y, 420, 20, "--- You Provide ---", false, dealCreatorWindow)
-    y = y + 22
-    guiCreateLabel(15, y, 60, 20, "Money:", false, dealCreatorWindow)
-    local myMoneyEdit = guiCreateEdit(80, y - 2, 80, 22, "0", false, dealCreatorWindow)
-    guiCreateLabel(175, y, 60, 20, "Effic:", false, dealCreatorWindow)
-    local myEffEdit = guiCreateEdit(230, y - 2, 60, 22, "0", false, dealCreatorWindow)
+    -- You Provide section
+    guiCreateLabel(15, y, 550, 20, "=== What You Provide (per cycle) ===", false, dealCreatorWindow)
+    y = y + 25
+    
+    guiCreateLabel(15, y, 55, 20, "Money:", false, dealCreatorWindow)
+    local myMoneyEdit = guiCreateEdit(75, y - 2, 70, 22, "0", false, dealCreatorWindow)
+    guiCreateLabel(155, y, 40, 20, "Eff:", false, dealCreatorWindow)
+    local myEffEdit = guiCreateEdit(195, y - 2, 50, 22, "0", false, dealCreatorWindow)
+    guiCreateLabel(255, y, 35, 20, "Inn:", false, dealCreatorWindow)
+    local myInnEdit = guiCreateEdit(290, y - 2, 50, 22, "0", false, dealCreatorWindow)
+    guiCreateLabel(350, y, 35, 20, "Log:", false, dealCreatorWindow)
+    local myLogEdit = guiCreateEdit(385, y - 2, 50, 22, "0", false, dealCreatorWindow)
     y = y + 30
     
-    guiCreateLabel(15, y, 420, 20, "--- They Provide ---", false, dealCreatorWindow)
-    y = y + 22
-    guiCreateLabel(15, y, 60, 20, "Money:", false, dealCreatorWindow)
-    local theirMoneyEdit = guiCreateEdit(80, y - 2, 80, 22, "0", false, dealCreatorWindow)
-    guiCreateLabel(175, y, 60, 20, "Effic:", false, dealCreatorWindow)
-    local theirEffEdit = guiCreateEdit(230, y - 2, 60, 22, "0", false, dealCreatorWindow)
+    -- Your items to trade
+    guiCreateLabel(15, y, 100, 20, "Your Items:", false, dealCreatorWindow)
+    local myItemCombo = guiCreateComboBox(115, y - 2, 200, 150, "-- Select Item --", false, dealCreatorWindow)
+    guiComboBoxAddItem(myItemCombo, "-- None --")
+    local myItemList = {}
+    for itemID, qty in pairs(myInventory) do
+        guiComboBoxAddItem(myItemCombo, itemID .. " (have: " .. qty .. ")")
+        table.insert(myItemList, itemID)
+    end
+    guiComboBoxSetSelected(myItemCombo, 0)
+    
+    guiCreateLabel(325, y, 30, 20, "Qty:", false, dealCreatorWindow)
+    local myItemQtyEdit = guiCreateEdit(360, y - 2, 50, 22, "0", false, dealCreatorWindow)
+    local myItemAddBtn = guiCreateButton(420, y - 2, 50, 22, "Add", false, dealCreatorWindow)
+    y = y + 28
+    
+    -- List of items you're providing
+    local myItemsLabel = guiCreateLabel(15, y, 550, 20, "Items: (none)", false, dealCreatorWindow)
+    local myItemsToTrade = {}
+    y = y + 30
+    
+    addEventHandler("onClientGUIClick", myItemAddBtn, function()
+        local idx = guiComboBoxGetSelected(myItemCombo)
+        if idx <= 0 or not myItemList[idx] then return end
+        local itemID = myItemList[idx]
+        local qty = tonumber(guiGetText(myItemQtyEdit)) or 0
+        if qty <= 0 then outputChatBox("Enter quantity > 0", 255, 100, 100) return end
+        
+        -- Check if we have enough
+        local available = myInventory[itemID] or 0
+        local alreadyTrading = myItemsToTrade[itemID] or 0
+        if qty + alreadyTrading > available then
+            outputChatBox("Not enough " .. itemID .. " (have: " .. available .. ", already trading: " .. alreadyTrading .. ")", 255, 100, 100)
+            return
+        end
+        
+        myItemsToTrade[itemID] = (myItemsToTrade[itemID] or 0) + qty
+        
+        -- Update label
+        local itemStr = "Items: "
+        local first = true
+        for id, q in pairs(myItemsToTrade) do
+            if not first then itemStr = itemStr .. ", " end
+            itemStr = itemStr .. q .. "x " .. id
+            first = false
+        end
+        guiSetText(myItemsLabel, itemStr)
+        guiSetText(myItemQtyEdit, "0")
+    end, false)
+    
+    -- They Provide section
+    guiCreateLabel(15, y, 550, 20, "=== What They Provide (per cycle) ===", false, dealCreatorWindow)
+    y = y + 25
+    
+    guiCreateLabel(15, y, 55, 20, "Money:", false, dealCreatorWindow)
+    local theirMoneyEdit = guiCreateEdit(75, y - 2, 70, 22, "0", false, dealCreatorWindow)
+    guiCreateLabel(155, y, 40, 20, "Eff:", false, dealCreatorWindow)
+    local theirEffEdit = guiCreateEdit(195, y - 2, 50, 22, "0", false, dealCreatorWindow)
+    guiCreateLabel(255, y, 35, 20, "Inn:", false, dealCreatorWindow)
+    local theirInnEdit = guiCreateEdit(290, y - 2, 50, 22, "0", false, dealCreatorWindow)
+    guiCreateLabel(350, y, 35, 20, "Log:", false, dealCreatorWindow)
+    local theirLogEdit = guiCreateEdit(385, y - 2, 50, 22, "0", false, dealCreatorWindow)
+    y = y + 30
+    
+    -- Items they provide (manual entry since we don't know their inventory)
+    guiCreateLabel(15, y, 100, 20, "Their Items:", false, dealCreatorWindow)
+    local theirItemEdit = guiCreateEdit(115, y - 2, 150, 22, "", false, dealCreatorWindow)
+    guiCreateLabel(275, y, 30, 20, "Qty:", false, dealCreatorWindow)
+    local theirItemQtyEdit = guiCreateEdit(310, y - 2, 50, 22, "0", false, dealCreatorWindow)
+    local theirItemAddBtn = guiCreateButton(370, y - 2, 50, 22, "Add", false, dealCreatorWindow)
+    y = y + 28
+    
+    local theirItemsLabel = guiCreateLabel(15, y, 550, 20, "Items: (none)", false, dealCreatorWindow)
+    local theirItemsToTrade = {}
     y = y + 35
     
+    addEventHandler("onClientGUIClick", theirItemAddBtn, function()
+        local itemID = guiGetText(theirItemEdit)
+        local qty = tonumber(guiGetText(theirItemQtyEdit)) or 0
+        if not itemID or itemID == "" then outputChatBox("Enter item ID", 255, 100, 100) return end
+        if qty <= 0 then outputChatBox("Enter quantity > 0", 255, 100, 100) return end
+        
+        theirItemsToTrade[itemID] = (theirItemsToTrade[itemID] or 0) + qty
+        
+        local itemStr = "Items: "
+        local first = true
+        for id, q in pairs(theirItemsToTrade) do
+            if not first then itemStr = itemStr .. ", " end
+            itemStr = itemStr .. q .. "x " .. id
+            first = false
+        end
+        guiSetText(theirItemsLabel, itemStr)
+        guiSetText(theirItemEdit, "")
+        guiSetText(theirItemQtyEdit, "0")
+    end, false)
+    
+    -- Duration
     guiCreateLabel(15, y, 80, 20, "Duration:", false, dealCreatorWindow)
-    local durCombo = guiCreateComboBox(100, y - 2, 130, 100, "", false, dealCreatorWindow)
+    local durCombo = guiCreateComboBox(100, y - 2, 150, 120, "", false, dealCreatorWindow)
     guiComboBoxAddItem(durCombo, "Infinite")
     guiComboBoxAddItem(durCombo, "10 cycles")
     guiComboBoxAddItem(durCombo, "20 cycles")
+    guiComboBoxAddItem(durCombo, "50 cycles")
     guiComboBoxSetSelected(durCombo, 0)
-    y = y + 45
+    y = y + 40
     
-    local createBtn = guiCreateButton(15, y, 200, 38, "Propose Deal", false, dealCreatorWindow)
+    -- Info text
+    guiCreateLabel(15, y, 550, 40, "Note: Item trades require logistics. Each item unit costs logistics to transfer.\nLogistics/points trades cost 0 logistics.", false, dealCreatorWindow)
+    y = y + 50
+    
+    local createBtn = guiCreateButton(15, y, 265, 40, "Propose Deal", false, dealCreatorWindow)
     guiSetProperty(createBtn, "NormalTextColour", "FF66FF66")
-    local cancelBtn = guiCreateButton(235, y, 200, 38, "Cancel", false, dealCreatorWindow)
+    local cancelBtn = guiCreateButton(300, y, 265, 40, "Cancel", false, dealCreatorWindow)
     
     addEventHandler("onClientGUIClick", createBtn, function()
         local pIdx = guiComboBoxGetSelected(partnerCombo)
@@ -953,10 +1153,22 @@ function openDealCreatorGUI(companyID, otherCompanies)
         end
         
         local partnerID = otherCompanies[pIdx + 1].id
-        local myProvides = { money = tonumber(guiGetText(myMoneyEdit)) or 0, efficiency = tonumber(guiGetText(myEffEdit)) or 0, items = {} }
-        local theirProvides = { money = tonumber(guiGetText(theirMoneyEdit)) or 0, efficiency = tonumber(guiGetText(theirEffEdit)) or 0, items = {} }
+        local myProvides = { 
+            money = tonumber(guiGetText(myMoneyEdit)) or 0, 
+            efficiency = tonumber(guiGetText(myEffEdit)) or 0, 
+            innovation = tonumber(guiGetText(myInnEdit)) or 0,
+            logistics = tonumber(guiGetText(myLogEdit)) or 0,
+            items = myItemsToTrade
+        }
+        local theirProvides = { 
+            money = tonumber(guiGetText(theirMoneyEdit)) or 0, 
+            efficiency = tonumber(guiGetText(theirEffEdit)) or 0, 
+            innovation = tonumber(guiGetText(theirInnEdit)) or 0,
+            logistics = tonumber(guiGetText(theirLogEdit)) or 0,
+            items = theirItemsToTrade
+        }
         local durIdx = guiComboBoxGetSelected(durCombo)
-        local durations = {"infinite", 10, 20}
+        local durations = {"infinite", 10, 20, 50}
         
         triggerServerEvent("economy:createDeal", localPlayer, companyID, partnerID, myProvides, theirProvides, durations[durIdx + 1])
         destroyElement(dealCreatorWindow)
@@ -1037,16 +1249,24 @@ local function openEconomyWindow()
         return
     end
     
-    -- DMs get the full management interface
-    if isPlayerDM() then
-        triggerServerEvent("economy:requestDMData", localPlayer)
-    else
-        triggerServerEvent("economy:requestPlayerCompanies", localPlayer)
+    -- Always ask server - it will determine if player is DM or not
+    triggerServerEvent("economy:requestEconomyGUI", localPlayer)
+end
+
+local function openDMEconomyWindow()
+    if economyWindow then
+        closeEconomyWindow()
     end
+    -- Explicitly request DM data
+    triggerServerEvent("economy:requestDMData", localPlayer)
 end
 
 bindKey("F6", "down", openEconomyWindow)
 addCommandHandler("company", openEconomyWindow)
+
+-- Dedicated DM command that doesn't conflict with F6
+addCommandHandler("dmeconomy", openDMEconomyWindow)
+addCommandHandler("dmecon", openDMEconomyWindow)
 
 addCommandHandler("acceptjob", function()
     local offer = getElementData(localPlayer, "pendingJobOffer")
@@ -1075,4 +1295,5 @@ addEventHandler("onClientResourceStop", resourceRoot, function()
     if dealCreatorWindow then destroyElement(dealCreatorWindow) end
 end)
 
-outputChatBox("Economy system loaded. Press F6 for company management.", 200, 200, 200)
+outputChatBox("Economy system loaded. Press F6 or /company for company management.", 200, 200, 200)
+outputChatBox("DMs: Use /dmeconomy or /dmecon for full economy management.", 200, 200, 200)

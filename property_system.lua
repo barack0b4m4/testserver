@@ -1,4 +1,90 @@
+--[[
+================================================================================
+    PROPERTY_SYSTEM.LUA - Property & Interior Management
+================================================================================
+    Manages purchasable/enterable properties with GTA:SA interior support.
+    Each property has an entrance in the world and teleports to an interior.
+    
+    FEATURES:
+    - 85 pre-configured GTA:SA interiors with correct coordinates
+    - Property ownership (character OR company)
+    - Unique dimension per property instance (no player collision)
+    - Property markers and blips
+    - Enter/exit system with position memory
+    - For sale status and pricing
+    - Lock/unlock system for owners
+    - Custom descriptions set by owners
+    - Transfer between characters and companies
+    
+    OWNERSHIP TYPES:
+    - "character" - Owned by a player character (ownerID = character_id)
+    - "company" - Owned by a company (ownerID = company_id)
+    
+    INTEGRATION POINTS:
+    ┌─────────────────────────────────────────────────────────────────────────┐
+    │ DEPENDS ON:                                                             │
+    │   - server.lua: database, AccountManager                                │
+    │   - dungeon_master.lua: isDungeonMaster() for property creation         │
+    │   - economic_system.lua: Companies table for company ownership          │
+    │                                                                         │
+    │ PROVIDES TO:                                                            │
+    │   - client_property.lua: Property entry/exit handling                   │
+    │   - client_interaction.lua: Property creation via GUI                   │
+    │   - server_interaction.lua: Property entrance positioning               │
+    │   - vehicle_system.lua: Shared ownership patterns                       │
+    │                                                                         │
+    │ GLOBAL EXPORTS:                                                         │
+    │   - Properties: Table of all properties keyed by ID                     │
+    │   - PropertyMarkers: Entrance markers keyed by property ID              │
+    │   - PropertyBlips: Map blips keyed by property ID                       │
+    │   - INTERIOR_PRESETS: All 85 interior definitions                       │
+    │   - createProperty(name, desc, price, interiorID, x, y, z, ...)         │
+    │   - purchaseProperty(player, propertyID)                                │
+    │   - teleportToPropertyInterior(player, propertyID)                      │
+    │   - exitProperty(player)                                                │
+    │   - lockProperty(propertyID) / unlockProperty(propertyID)               │
+    │   - transferProperty(propertyID, newOwnerType, newOwnerID)              │
+    │   - setPropertyDescription(propertyID, description)                     │
+    │   - canAccessProperty(player, propertyID)                               │
+    └─────────────────────────────────────────────────────────────────────────┘
+    
+    DM COMMANDS:
+    - /createproperty "Name" interiorID price
+    - /deleteproperty propertyID
+    - /editproperty propertyID [options]
+    - /listproperties [search]
+    - /gotoproperty propertyID
+    - /setpropertyentrance propertyID (uses pending position)
+    - /setpropertyowner propertyID character/company ownerID
+    
+    PLAYER COMMANDS:
+    - /buyproperty - Purchase property you're standing at
+    - /sellproperty - Put your property up for sale
+    - /myproperties - List owned properties
+    - /lockproperty - Lock property you're in
+    - /unlockproperty - Unlock property you're in
+    - /propdesc "description" - Set property description
+    - /transferproperty companyID - Transfer to your company
+    
+    INTERIOR CATEGORIES:
+    - Houses & Apartments (1-12)
+    - Safehouses (13-24)
+    - Police Stations (25-27)
+    - Hospitals (28-30)
+    - Fast Food (31-33)
+    - Bars & Clubs (34-37)
+    - Gyms (38-40)
+    - Shops (41-51)
+    - Barber Shops (52-54)
+    - Tattoo Parlors (55-57)
+    - Casinos (58-60)
+    - 24/7 Stores (61-66)
+    - Special Locations (67-85)
+================================================================================
+]]
+
 -- property_system.lua (SERVER)
+-- Property management system with CORRECT GTA:SA interior coordinates
 
 outputServerLog("===== PROPERTY_SYSTEM.LUA LOADING =====")
 
@@ -9,6 +95,12 @@ Properties = Properties or {}
 PropertyMarkers = PropertyMarkers or {}
 PropertyBlips = PropertyBlips or {}
 PropertyInstanceCounter = 0
+
+-- Owner type constants
+PROPERTY_OWNER_TYPE = {
+    CHARACTER = "character",
+    COMPANY = "company"
+}
 
 -- CORRECTED GTA:SA INTERIOR PRESETS
 -- Format: {id = GTA Interior ID, name = "Name", x, y, z = spawn position inside}
@@ -153,13 +245,56 @@ local function initializePropertyTables()
             entrance_world_z REAL NOT NULL,
             entrance_dimension INTEGER DEFAULT 0,
             entrance_interior INTEGER DEFAULT 0,
-            owner_character_id INTEGER,
+            owner_type TEXT DEFAULT 'character',
+            owner_id TEXT,
             owner_name TEXT,
+            is_locked INTEGER DEFAULT 0,
             created_date INTEGER,
             created_by TEXT,
             for_sale INTEGER DEFAULT 1
         )
     ]])
+    
+    -- Migration: Add new columns if they don't exist (SQLite ignores errors for existing columns)
+    -- We need to check if columns exist first
+    local query = dbQuery(db, "PRAGMA table_info(properties)")
+    local columns = dbPoll(query, -1)
+    
+    local hasOwnerType = false
+    local hasOwnerID = false
+    local hasIsLocked = false
+    local hasOwnerCharacterID = false
+    
+    if columns then
+        for _, col in ipairs(columns) do
+            if col.name == "owner_type" then hasOwnerType = true end
+            if col.name == "owner_id" then hasOwnerID = true end
+            if col.name == "is_locked" then hasIsLocked = true end
+            if col.name == "owner_character_id" then hasOwnerCharacterID = true end
+        end
+    end
+    
+    -- Add missing columns
+    if not hasOwnerType then
+        dbExec(db, "ALTER TABLE properties ADD COLUMN owner_type TEXT DEFAULT 'character'")
+        outputServerLog("Added owner_type column to properties")
+    end
+    
+    if not hasOwnerID then
+        dbExec(db, "ALTER TABLE properties ADD COLUMN owner_id TEXT")
+        outputServerLog("Added owner_id column to properties")
+    end
+    
+    if not hasIsLocked then
+        dbExec(db, "ALTER TABLE properties ADD COLUMN is_locked INTEGER DEFAULT 0")
+        outputServerLog("Added is_locked column to properties")
+    end
+    
+    -- Migrate old owner_character_id to owner_id if needed
+    if hasOwnerCharacterID then
+        dbExec(db, "UPDATE properties SET owner_id = CAST(owner_character_id AS TEXT) WHERE owner_id IS NULL AND owner_character_id IS NOT NULL")
+        outputServerLog("Migrated owner_character_id to owner_id")
+    end
     
     outputServerLog("Property database tables initialized")
 end
@@ -203,6 +338,12 @@ function loadAllProperties()
     for _, row in ipairs(result) do
         local interiorPreset = INTERIOR_PRESETS[row.interior_id] or INTERIOR_PRESETS["1"]
         
+        -- Handle both old (owner_character_id) and new (owner_id) column names
+        local ownerID = row.owner_id
+        if not ownerID and row.owner_character_id then
+            ownerID = tostring(row.owner_character_id)
+        end
+        
         local property = {
             id = row.id,
             name = row.name,
@@ -216,8 +357,10 @@ function loadAllProperties()
             entranceDimension = row.entrance_dimension,
             entranceInterior = row.entrance_interior,
             instanceDimension = row.instance_dimension or getNextInstanceDimension(),
-            ownerCharacterID = row.owner_character_id,
+            ownerType = row.owner_type or PROPERTY_OWNER_TYPE.CHARACTER,
+            ownerID = ownerID,
             ownerName = row.owner_name,
+            isLocked = (row.is_locked and row.is_locked == 1) or false,
             forSale = (row.for_sale == 1),
             createdDate = row.created_date,
             createdBy = row.created_by
@@ -244,7 +387,15 @@ function spawnPropertyMarker(propertyID)
         destroyElement(PropertyMarkers[propertyID])
     end
     
-    local markerColor = property.forSale and {100, 200, 100} or {200, 100, 100}
+    -- Color: Green = for sale, Red = owned unlocked, Orange = owned locked
+    local markerColor
+    if property.forSale then
+        markerColor = {100, 200, 100}  -- Green
+    elseif property.isLocked then
+        markerColor = {255, 150, 50}   -- Orange
+    else
+        markerColor = {200, 100, 100}  -- Red
+    end
     
     local marker = createMarker(
         property.entrancePos.x,
@@ -263,9 +414,12 @@ function spawnPropertyMarker(propertyID)
         setElementInterior(marker, property.entranceInterior)
         setElementData(marker, "property.id", propertyID)
         setElementData(marker, "property.name", property.name)
+        setElementData(marker, "property.description", property.description or "")
         setElementData(marker, "property.price", property.price)
         setElementData(marker, "property.owner", property.ownerName or "For Sale")
+        setElementData(marker, "property.owner_type", property.ownerType)
         setElementData(marker, "property.for_sale", property.forSale)
+        setElementData(marker, "property.is_locked", property.isLocked)
         setElementData(marker, "property.interior", property.interiorGTAID)
         
         PropertyMarkers[propertyID] = marker
@@ -358,7 +512,7 @@ function purchaseProperty(player, propertyID)
     if not property then return false, "Property not found" end
     
     if not property.forSale then return false, "Property is not for sale" end
-    if property.ownerName then return false, "Property is already owned" end
+    if property.ownerID then return false, "Property is already owned" end
     
     local playerMoney = getPlayerMoney(player)
     if playerMoney < property.price then
@@ -370,13 +524,15 @@ function purchaseProperty(player, propertyID)
     
     takePlayerMoney(player, property.price)
     
-    property.ownerCharacterID = char.id
+    property.ownerType = PROPERTY_OWNER_TYPE.CHARACTER
+    property.ownerID = tostring(char.id)
     property.ownerName = char.name
     property.forSale = false
+    property.isLocked = false
     
     dbExec(db, [[
-        UPDATE properties SET owner_character_id = ?, owner_name = ?, for_sale = 0 WHERE id = ?
-    ]], char.id, char.name, propertyID)
+        UPDATE properties SET owner_type = ?, owner_id = ?, owner_name = ?, for_sale = 0, is_locked = 0 WHERE id = ?
+    ]], PROPERTY_OWNER_TYPE.CHARACTER, tostring(char.id), char.name, propertyID)
     
     spawnPropertyMarker(propertyID)
     spawnPropertyBlip(propertyID)
@@ -389,6 +545,11 @@ end
 function teleportToPropertyInterior(player, propertyID)
     local property = Properties[propertyID]
     if not property then return false, "Property not found" end
+    
+    -- Check if player can access this property
+    if not canAccessProperty(player, propertyID) then
+        return false, "This property is locked"
+    end
     
     -- Store entrance position so player can return
     setElementData(player, "property.entrance.x", property.entrancePos.x)
@@ -781,6 +942,363 @@ addCommandHandler("exitinterior", function(player)
     setElementData(player, "dm.return.dim", nil)
     
     outputChatBox("Returned to previous location", player, 0, 255, 0)
+end)
+
+--------------------------------------------------------------------------------
+-- PROPERTY ACCESS & OWNERSHIP FUNCTIONS
+--------------------------------------------------------------------------------
+
+--- Check if a player can access a property
+-- @param player element Player to check
+-- @param propertyID string Property ID
+-- @return boolean Can access
+function canAccessProperty(player, propertyID)
+    local property = Properties[propertyID]
+    if not property then return false end
+    
+    -- For sale properties are always accessible
+    if property.forSale then return true end
+    
+    -- Unlocked properties are accessible
+    if not property.isLocked then return true end
+    
+    -- DMs can always access
+    if isDungeonMaster and isDungeonMaster(player) then return true end
+    
+    -- Check ownership
+    return isPropertyOwner(player, propertyID)
+end
+
+--- Check if a player owns a property
+-- @param player element Player to check
+-- @param propertyID string Property ID
+-- @return boolean Is owner
+function isPropertyOwner(player, propertyID)
+    local property = Properties[propertyID]
+    if not property then return false end
+    if not property.ownerID then return false end
+    
+    if property.ownerType == PROPERTY_OWNER_TYPE.CHARACTER then
+        -- Check character ownership
+        local char = AccountManager and AccountManager:getActiveCharacter(player)
+        if char and tostring(char.id) == tostring(property.ownerID) then
+            return true
+        end
+    elseif property.ownerType == PROPERTY_OWNER_TYPE.COMPANY then
+        -- Check if player owns the company
+        if Companies then
+            local company = Companies[property.ownerID]
+            if company and company.ownerType == "player" then
+                local char = AccountManager and AccountManager:getActiveCharacter(player)
+                if char and tostring(char.id) == tostring(company.ownerID) then
+                    return true
+                end
+            end
+        end
+    end
+    
+    return false
+end
+
+--- Lock a property
+-- @param propertyID string Property ID
+-- @return boolean Success
+function lockProperty(propertyID)
+    local property = Properties[propertyID]
+    if not property then return false end
+    
+    property.isLocked = true
+    dbExec(db, "UPDATE properties SET is_locked = 1 WHERE id = ?", propertyID)
+    spawnPropertyMarker(propertyID)
+    
+    return true
+end
+
+--- Unlock a property
+-- @param propertyID string Property ID
+-- @return boolean Success
+function unlockProperty(propertyID)
+    local property = Properties[propertyID]
+    if not property then return false end
+    
+    property.isLocked = false
+    dbExec(db, "UPDATE properties SET is_locked = 0 WHERE id = ?", propertyID)
+    spawnPropertyMarker(propertyID)
+    
+    return true
+end
+
+--- Set property description
+-- @param propertyID string Property ID
+-- @param description string New description
+-- @return boolean Success
+function setPropertyDescription(propertyID, description)
+    local property = Properties[propertyID]
+    if not property then return false end
+    
+    property.description = description
+    dbExec(db, "UPDATE properties SET description = ? WHERE id = ?", description, propertyID)
+    spawnPropertyMarker(propertyID)
+    
+    return true
+end
+
+--- Transfer property to new owner
+-- @param propertyID string Property ID
+-- @param newOwnerType string "character" or "company"
+-- @param newOwnerID string Character ID or Company ID
+-- @param newOwnerName string Display name for owner
+-- @return boolean Success
+-- @return string Message
+function transferProperty(propertyID, newOwnerType, newOwnerID, newOwnerName)
+    local property = Properties[propertyID]
+    if not property then return false, "Property not found" end
+    
+    -- Validate owner type
+    if newOwnerType ~= PROPERTY_OWNER_TYPE.CHARACTER and newOwnerType ~= PROPERTY_OWNER_TYPE.COMPANY then
+        return false, "Invalid owner type"
+    end
+    
+    -- Update property
+    property.ownerType = newOwnerType
+    property.ownerID = newOwnerID
+    property.ownerName = newOwnerName
+    property.forSale = false
+    
+    dbExec(db, [[
+        UPDATE properties SET 
+            owner_type = ?, owner_id = ?, owner_name = ?, for_sale = 0 
+        WHERE id = ?
+    ]], newOwnerType, newOwnerID, newOwnerName, propertyID)
+    
+    spawnPropertyMarker(propertyID)
+    spawnPropertyBlip(propertyID)
+    
+    outputServerLog("Property " .. property.name .. " transferred to " .. newOwnerName .. " (" .. newOwnerType .. ")")
+    
+    return true, "Property transferred to " .. newOwnerName
+end
+
+--- Get properties owned by a character
+-- @param characterID number Character ID
+-- @return table Array of property IDs
+function getCharacterProperties(characterID)
+    local owned = {}
+    for propID, property in pairs(Properties) do
+        if property.ownerType == PROPERTY_OWNER_TYPE.CHARACTER and 
+           tostring(property.ownerID) == tostring(characterID) then
+            table.insert(owned, propID)
+        end
+    end
+    return owned
+end
+
+--- Get properties owned by a company
+-- @param companyID string Company ID
+-- @return table Array of property IDs
+function getCompanyProperties(companyID)
+    local owned = {}
+    for propID, property in pairs(Properties) do
+        if property.ownerType == PROPERTY_OWNER_TYPE.COMPANY and 
+           property.ownerID == companyID then
+            table.insert(owned, propID)
+        end
+    end
+    return owned
+end
+
+--------------------------------------------------------------------------------
+-- PLAYER PROPERTY COMMANDS
+--------------------------------------------------------------------------------
+
+local PROPERTY_INTERACT_DISTANCE = 10.0
+
+-- Helper: Find property player is in or near
+function findPlayerProperty(player)
+    -- First check if inside a property
+    local insideID = getElementData(player, "property.current")
+    if insideID then
+        return insideID, true  -- propertyID, isInside
+    end
+    
+    -- Check for nearby property entrance
+    local px, py, pz = getElementPosition(player)
+    local pDim = getElementDimension(player)
+    local pInt = getElementInterior(player)
+    
+    local nearestID = nil
+    local nearestDist = PROPERTY_INTERACT_DISTANCE
+    
+    for propID, marker in pairs(PropertyMarkers) do
+        if isElement(marker) then
+            if getElementDimension(marker) == pDim and getElementInterior(marker) == pInt then
+                local mx, my, mz = getElementPosition(marker)
+                local dist = getDistanceBetweenPoints3D(px, py, pz, mx, my, mz)
+                if dist < nearestDist then
+                    nearestDist = dist
+                    nearestID = propID
+                end
+            end
+        end
+    end
+    
+    return nearestID, false  -- propertyID, isInside
+end
+
+-- Lock property
+addCommandHandler("lockproperty", function(player)
+    local propertyID, isInside = findPlayerProperty(player)
+    if not propertyID then
+        outputChatBox("No property nearby", player, 255, 100, 100)
+        return
+    end
+    
+    if not isPropertyOwner(player, propertyID) then
+        outputChatBox("You don't own this property", player, 255, 100, 100)
+        return
+    end
+    
+    lockProperty(propertyID)
+    local property = Properties[propertyID]
+    outputChatBox(property.name .. " locked", player, 0, 255, 0)
+end)
+
+-- Unlock property
+addCommandHandler("unlockproperty", function(player)
+    local propertyID, isInside = findPlayerProperty(player)
+    if not propertyID then
+        outputChatBox("No property nearby", player, 255, 100, 100)
+        return
+    end
+    
+    if not isPropertyOwner(player, propertyID) then
+        outputChatBox("You don't own this property", player, 255, 100, 100)
+        return
+    end
+    
+    unlockProperty(propertyID)
+    local property = Properties[propertyID]
+    outputChatBox(property.name .. " unlocked", player, 0, 255, 0)
+end)
+
+-- Set property description
+addCommandHandler("propdesc", function(player, cmd, ...)
+    local propertyID, isInside = findPlayerProperty(player)
+    if not propertyID then
+        outputChatBox("No property nearby", player, 255, 100, 100)
+        return
+    end
+    
+    if not isPropertyOwner(player, propertyID) then
+        outputChatBox("You don't own this property", player, 255, 100, 100)
+        return
+    end
+    
+    local description = table.concat({...}, " ")
+    if description == "" then
+        outputChatBox("Usage: /propdesc <description>", player, 255, 255, 0)
+        return
+    end
+    
+    setPropertyDescription(propertyID, description)
+    local property = Properties[propertyID]
+    outputChatBox(property.name .. " description updated", player, 0, 255, 0)
+end)
+
+-- Transfer property to company
+addCommandHandler("transferproperty", function(player, cmd, companyID)
+    local propertyID, isInside = findPlayerProperty(player)
+    if not propertyID then
+        outputChatBox("No property nearby", player, 255, 100, 100)
+        return
+    end
+    
+    if not isPropertyOwner(player, propertyID) then
+        outputChatBox("You don't own this property", player, 255, 100, 100)
+        return
+    end
+    
+    if not companyID then
+        outputChatBox("Usage: /transferproperty <companyID or 'me'>", player, 255, 255, 0)
+        return
+    end
+    
+    local property = Properties[propertyID]
+    
+    if companyID == "me" then
+        -- Transfer back to character
+        local char = AccountManager and AccountManager:getActiveCharacter(player)
+        if not char then
+            outputChatBox("No active character", player, 255, 0, 0)
+            return
+        end
+        
+        local success, msg = transferProperty(propertyID, PROPERTY_OWNER_TYPE.CHARACTER, tostring(char.id), char.name)
+        outputChatBox(msg, player, success and 0 or 255, success and 255 or 0, 0)
+    else
+        -- Transfer to company
+        if not Companies or not Companies[companyID] then
+            outputChatBox("Company not found", player, 255, 0, 0)
+            return
+        end
+        
+        local company = Companies[companyID]
+        
+        -- Verify player owns the company
+        local char = AccountManager and AccountManager:getActiveCharacter(player)
+        if not char or company.ownerType ~= "player" or tostring(company.ownerID) ~= tostring(char.id) then
+            outputChatBox("You don't own that company", player, 255, 0, 0)
+            return
+        end
+        
+        local success, msg = transferProperty(propertyID, PROPERTY_OWNER_TYPE.COMPANY, companyID, company.name)
+        outputChatBox(msg, player, success and 0 or 255, success and 255 or 0, 0)
+    end
+end)
+
+--------------------------------------------------------------------------------
+-- DM PROPERTY OWNER COMMAND
+--------------------------------------------------------------------------------
+
+addCommandHandler("setpropertyowner", function(player, cmd, propertyID, ownerType, ownerID)
+    if isDungeonMaster and not isDungeonMaster(player) then
+        outputChatBox("DM required", player, 255, 0, 0)
+        return
+    end
+    
+    if not propertyID or not ownerType then
+        outputChatBox("Usage: /setpropertyowner propertyID character/company ownerID", player, 255, 255, 0)
+        return
+    end
+    
+    local property = Properties[propertyID]
+    if not property then
+        outputChatBox("Property not found", player, 255, 0, 0)
+        return
+    end
+    
+    local ownerName = "Unknown"
+    
+    if ownerType == "character" then
+        -- Look up character name
+        if AccountManager then
+            local query = dbQuery(db, "SELECT name FROM characters WHERE id = ?", tonumber(ownerID))
+            local result = dbPoll(query, -1)
+            if result and result[1] then
+                ownerName = result[1].name
+            end
+        end
+    elseif ownerType == "company" then
+        if Companies and Companies[ownerID] then
+            ownerName = Companies[ownerID].name
+        end
+    else
+        outputChatBox("Owner type must be 'character' or 'company'", player, 255, 0, 0)
+        return
+    end
+    
+    local success, msg = transferProperty(propertyID, ownerType, ownerID, ownerName)
+    outputChatBox(msg, player, success and 0 or 255, success and 255 or 0, 0)
 end)
 
 --------------------------------------------------------------------------------

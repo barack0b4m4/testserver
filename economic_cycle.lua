@@ -887,21 +887,7 @@ end
 -- Request player's companies
 addEvent("economy:requestPlayerCompanies", true)
 addEventHandler("economy:requestPlayerCompanies", root, function()
-    local acc = AccountManager and AccountManager:getAccount(client)
-    if not acc then return end
-    
-    local companies = {}
-    for id, company in pairs(Companies) do
-        if company.ownerType == "player" and company.ownerID == tostring(acc.id) then
-            table.insert(companies, {
-                id = company.id,
-                name = company.name,
-                type = company.type
-            })
-        end
-    end
-    
-    triggerClientEvent(client, "economy:playerCompanies", client, companies)
+    sendPlayerCompanies(client)
 end)
 
 -- Open company creator (just sends back to client to show the GUI)
@@ -911,6 +897,27 @@ addEventHandler("economy:openCompanyCreator", root, function()
     triggerClientEvent(client, "economy:showCompanyCreator", client)
 end)
 
+-- Helper function to verify company ownership
+-- Returns true if player owns the company or is a DM
+function verifyCompanyOwnership(player, company, allowDM)
+    if not company then return false end
+    
+    -- DM bypass
+    if allowDM and isDungeonMaster and isDungeonMaster(player) then
+        return true
+    end
+    
+    -- Must be player-owned
+    if company.ownerType ~= "player" then return false end
+    
+    -- Get character ID
+    local char = AccountManager and AccountManager:getActiveCharacter(player)
+    if not char then return false end
+    
+    -- Compare with company owner (character ID)
+    return company.ownerID == tostring(char.id)
+end
+
 -- Open hire dialog
 addEvent("economy:openHireDialog", true)
 addEventHandler("economy:openHireDialog", root, function(companyID)
@@ -918,8 +925,7 @@ addEventHandler("economy:openHireDialog", root, function(companyID)
     if not company then return end
     
     -- Verify ownership
-    local acc = AccountManager and AccountManager:getAccount(client)
-    if company.ownerType ~= "player" or company.ownerID ~= tostring(acc.id) then
+    if not verifyCompanyOwnership(client, company, true) then
         return
     end
     
@@ -933,8 +939,7 @@ addEventHandler("economy:openDealCreator", root, function(companyID)
     if not company then return end
     
     -- Verify ownership
-    local acc = AccountManager and AccountManager:getAccount(client)
-    if company.ownerType ~= "player" or company.ownerID ~= tostring(acc.id) then
+    if not verifyCompanyOwnership(client, company, true) then
         return
     end
     
@@ -975,9 +980,7 @@ addEventHandler("economy:setProduction", root, function(companyID, productionTyp
     if not company then return end
     
     -- Verify ownership
-    local acc = AccountManager and AccountManager:getAccount(client)
-    local isDM = isDungeonMaster and isDungeonMaster(client)
-    if not isDM and (company.ownerType ~= "player" or company.ownerID ~= tostring(acc.id)) then
+    if not verifyCompanyOwnership(client, company, true) then
         return
     end
     
@@ -1002,10 +1005,7 @@ addEventHandler("economy:requestCompanyData", root, function(companyID)
     if not company then return end
     
     -- Verify ownership or DM
-    local acc = AccountManager and AccountManager:getAccount(client)
-    local isDM = isDungeonMaster and isDungeonMaster(client)
-    
-    if not isDM and (company.ownerType ~= "player" or company.ownerID ~= tostring(acc.id)) then
+    if not verifyCompanyOwnership(client, company, true) then
         return
     end
     
@@ -1014,6 +1014,7 @@ addEventHandler("economy:requestCompanyData", root, function(companyID)
         id = company.id,
         name = company.name,
         type = company.type,
+        ownerType = company.ownerType,
         points = {
             money = company.points.money,
             efficiency = company.points.efficiency,
@@ -1025,10 +1026,22 @@ addEventHandler("economy:requestCompanyData", root, function(companyID)
         deals = {},
         perks = company.perks,
         autoProduceItem = company.production.autoProduceItem,
-        currentRecipe = company.production.currentRecipe
+        currentRecipe = company.production.currentRecipe,
+        availableResources = {},
+        availableRecipes = {}
     }
     
-    -- Add deal info
+    -- Get available resource items (for resource companies)
+    if company.type == "resource" then
+        data.availableResources = getAvailableResourceItems()
+    end
+    
+    -- Get available recipes (for manufacturing companies)
+    if company.type == "manufacturing" then
+        data.availableRecipes = getAvailableRecipes()
+    end
+    
+    -- Add deal info with full details
     for _, dealID in ipairs(company.deals) do
         local deal = Deals[dealID]
         if deal then
@@ -1051,6 +1064,68 @@ addEventHandler("economy:requestCompanyData", root, function(companyID)
     triggerClientEvent(client, "economy:companyData", client, data)
 end)
 
+-- Get available resource items from economy_items table
+function getAvailableResourceItems()
+    local items = {}
+    
+    -- First check economy_items for items with labor cost set
+    if database then
+        local query = dbQuery(database, "SELECT * FROM economy_items WHERE labor_cost > 0")
+        local result = dbPoll(query, -1)
+        if result then
+            for _, row in ipairs(result) do
+                table.insert(items, {
+                    id = row.item_id,
+                    name = row.item_id,  -- Will be replaced with actual name if available
+                    laborCost = row.labor_cost
+                })
+            end
+        end
+    end
+    
+    -- Also check ItemRegistry for resource category items
+    if ItemRegistry and ItemRegistry.items then
+        for itemID, item in pairs(ItemRegistry.items) do
+            if item.category == "resource" then
+                -- Check if not already in list
+                local found = false
+                for _, existing in ipairs(items) do
+                    if existing.id == itemID then found = true break end
+                end
+                if not found then
+                    table.insert(items, {
+                        id = itemID,
+                        name = item.name or itemID,
+                        laborCost = 1.0  -- Default labor cost
+                    })
+                end
+            end
+        end
+    end
+    
+    return items
+end
+
+-- Get available recipes
+function getAvailableRecipes()
+    local recipes = {}
+    
+    if database then
+        local query = dbQuery(database, "SELECT id, name FROM economy_recipes WHERE company_type = 'manufacturing'")
+        local result = dbPoll(query, -1)
+        if result then
+            for _, row in ipairs(result) do
+                table.insert(recipes, {
+                    id = row.id,
+                    name = row.name
+                })
+            end
+        end
+    end
+    
+    return recipes
+end
+
 -- Hire NPC employee
 addEvent("economy:hireNPC", true)
 addEventHandler("economy:hireNPC", root, function(companyID, empType, wage, allocation)
@@ -1060,9 +1135,8 @@ addEventHandler("economy:hireNPC", root, function(companyID, empType, wage, allo
         return
     end
     
-    -- Verify ownership
-    local acc = AccountManager and AccountManager:getAccount(client)
-    if company.ownerType ~= "player" or company.ownerID ~= tostring(acc.id) then
+    -- Verify ownership (allow DM)
+    if not verifyCompanyOwnership(client, company, true) then
         triggerClientEvent(client, "economy:message", client, "You don't own this company", true)
         return
     end
@@ -1082,9 +1156,8 @@ addEventHandler("economy:fireEmployee", root, function(companyID, empID)
     local company = Companies[companyID]
     if not company then return end
     
-    -- Verify ownership
-    local acc = AccountManager and AccountManager:getAccount(client)
-    if company.ownerType ~= "player" or company.ownerID ~= tostring(acc.id) then
+    -- Verify ownership (allow DM)
+    if not verifyCompanyOwnership(client, company, true) then
         return
     end
     
@@ -1101,9 +1174,8 @@ addEventHandler("economy:buyPerk", root, function(companyID, perkID)
     local company = Companies[companyID]
     if not company then return end
     
-    -- Verify ownership
-    local acc = AccountManager and AccountManager:getAccount(client)
-    if company.ownerType ~= "player" or company.ownerID ~= tostring(acc.id) then
+    -- Verify ownership (allow DM)
+    if not verifyCompanyOwnership(client, company, true) then
         return
     end
     
@@ -1148,6 +1220,12 @@ addEventHandler("economy:createPlayerCompany", root, function(name, companyType)
     local acc = AccountManager and AccountManager:getAccount(client)
     if not acc then return end
     
+    local char = AccountManager:getActiveCharacter(client)
+    if not char then
+        triggerClientEvent(client, "economy:message", client, "No active character", true)
+        return
+    end
+    
     -- Check if player has enough money
     local playerMoney = getPlayerMoney(client)
     if playerMoney < EconomyConfig.COMPANY_STARTING_CAPITAL then
@@ -1155,13 +1233,14 @@ addEventHandler("economy:createPlayerCompany", root, function(name, companyType)
         return
     end
     
-    local companyID, err = createCompany(name, companyType, "player", tostring(acc.id), EconomyConfig.COMPANY_STARTING_CAPITAL)
+    -- Use character ID as owner, not account ID
+    local companyID, err = createCompany(name, companyType, "player", tostring(char.id), EconomyConfig.COMPANY_STARTING_CAPITAL)
     
     if companyID then
         takePlayerMoney(client, EconomyConfig.COMPANY_STARTING_CAPITAL)
         triggerClientEvent(client, "economy:message", client, "Company created: " .. name)
-        -- Refresh company list
-        triggerServerEvent("economy:requestPlayerCompanies", client)
+        -- Send updated company list to client
+        sendPlayerCompanies(client)
     else
         triggerClientEvent(client, "economy:message", client, err or "Failed to create company", true)
     end
@@ -1174,8 +1253,7 @@ addEventHandler("economy:sellToMarket", root, function(companyID, itemID, quanti
     if not company then return end
     
     -- Verify ownership
-    local acc = AccountManager and AccountManager:getAccount(client)
-    if company.ownerType ~= "player" or company.ownerID ~= tostring(acc.id) then
+    if not verifyCompanyOwnership(client, company, true) then
         return
     end
     
@@ -1252,9 +1330,7 @@ addEventHandler("economy:createDeal", root, function(companyAID, companyBID, com
     end
     
     -- Verify ownership of company A
-    local acc = AccountManager and AccountManager:getAccount(client)
-    local isDM = isDungeonMaster and isDungeonMaster(client)
-    if not isDM and (companyA.ownerType ~= "player" or companyA.ownerID ~= tostring(acc.id)) then
+    if not verifyCompanyOwnership(client, companyA, true) then
         triggerClientEvent(client, "economy:message", client, "You don't own this company", true)
         return
     end
@@ -1303,10 +1379,27 @@ addEvent("economy:requestDMData", true)
 addEventHandler("economy:requestDMData", root, function()
     if not isDungeonMaster or not isDungeonMaster(client) then
         -- Fall back to player view
-        triggerServerEvent("economy:requestPlayerCompanies", client)
+        outputChatBox("DM access required for economy management panel", client, 255, 100, 100)
+        sendPlayerCompanies(client)
         return
     end
     
+    sendDMEconomyData(client)
+end)
+
+-- Unified request - server decides if DM or player view
+addEvent("economy:requestEconomyGUI", true)
+addEventHandler("economy:requestEconomyGUI", root, function()
+    -- Check if player is a DM
+    if isDungeonMaster and isDungeonMaster(client) then
+        sendDMEconomyData(client)
+    else
+        sendPlayerCompanies(client)
+    end
+end)
+
+-- Helper function to send DM economy data
+function sendDMEconomyData(player)
     -- Build company list with summary data
     local companies = {}
     for id, company in pairs(Companies) do
@@ -1336,8 +1429,30 @@ addEventHandler("economy:requestDMData", root, function()
         nextCycleTime = GlobalEconomy.nextCycleTime
     }
     
-    triggerClientEvent(client, "economy:dmEconomyData", client, companies, markets)
-end)
+    triggerClientEvent(player, "economy:dmEconomyData", player, companies, markets)
+end
+
+-- Helper function to send player companies
+function sendPlayerCompanies(player)
+    local acc = AccountManager and AccountManager:getAccount(player)
+    if not acc then return end
+    
+    local char = AccountManager:getActiveCharacter(player)
+    if not char then return end
+    
+    local companies = {}
+    for id, company in pairs(Companies) do
+        if company.ownerType == "player" and company.ownerID == tostring(char.id) then
+            table.insert(companies, {
+                id = company.id,
+                name = company.name,
+                type = company.type
+            })
+        end
+    end
+    
+    triggerClientEvent(player, "economy:playerCompanies", player, companies)
+end
 
 -- DM create NPC company
 addEvent("economy:dmCreateNPCCompany", true)
@@ -1352,7 +1467,7 @@ addEventHandler("economy:dmCreateNPCCompany", root, function(name, companyType, 
     if companyID then
         triggerClientEvent(client, "economy:message", client, "NPC Company created: " .. name)
         -- Refresh DM view
-        triggerServerEvent("economy:requestDMData", client)
+        sendDMEconomyData(client)
     else
         triggerClientEvent(client, "economy:message", client, err or "Failed to create company", true)
     end
@@ -1368,14 +1483,11 @@ addEventHandler("economy:deleteCompany", root, function(companyID)
     end
     
     -- Check permission: DM can delete any, player can only delete their own
-    local acc = AccountManager and AccountManager:getAccount(client)
     local isDM = isDungeonMaster and isDungeonMaster(client)
     
-    if not isDM then
-        if company.ownerType ~= "player" or company.ownerID ~= tostring(acc.id) then
-            triggerClientEvent(client, "economy:message", client, "You don't own this company", true)
-            return
-        end
+    if not verifyCompanyOwnership(client, company, true) then
+        triggerClientEvent(client, "economy:message", client, "You don't own this company", true)
+        return
     end
     
     local companyName = company.name
@@ -1385,9 +1497,9 @@ addEventHandler("economy:deleteCompany", root, function(companyID)
         triggerClientEvent(client, "economy:message", client, "Deleted: " .. companyName)
         -- Clear selection and refresh
         if isDM then
-            triggerServerEvent("economy:requestDMData", client)
+            sendDMEconomyData(client)
         else
-            triggerServerEvent("economy:requestPlayerCompanies", client)
+            sendPlayerCompanies(client)
         end
     else
         triggerClientEvent(client, "economy:message", client, msg or "Failed to delete", true)
@@ -1504,6 +1616,160 @@ addCommandHandler("listcompanies", function(player)
     for companyID, company in pairs(Companies) do
         local owner = company.ownerType == "npc" and "NPC" or company.ownerID
         outputChatBox(company.name .. " [" .. company.type .. "] - " .. formatMoney(company.points.money) .. " - " .. owner, player, 200, 200, 200)
+    end
+end)
+
+-- Create economy resource item (for resource companies to produce)
+addCommandHandler("createresource", function(player, cmd, itemID, laborCost, basePrice, ...)
+    if not isDungeonMaster or not isDungeonMaster(player) then
+        outputChatBox("DM required", player, 255, 0, 0)
+        return
+    end
+    
+    if not itemID then
+        outputChatBox("Usage: /createresource itemID [laborCost] [basePrice] [name...]", player, 255, 255, 0)
+        outputChatBox("  laborCost: LP needed to produce 1 unit (default: 1.0)", player, 200, 200, 200)
+        outputChatBox("  basePrice: Market value per unit (default: 10)", player, 200, 200, 200)
+        return
+    end
+    
+    laborCost = tonumber(laborCost) or 1.0
+    basePrice = tonumber(basePrice) or 10
+    local name = table.concat({...}, " ")
+    if name == "" then name = itemID end
+    
+    -- Create in ItemRegistry if available
+    if ItemRegistry and ItemRegistry.register then
+        ItemRegistry:register({
+            id = itemID,
+            name = name,
+            category = "resource",
+            weight = 1.0,
+            value = basePrice,
+            stackable = true,
+            maxStack = 999,
+            description = "Raw resource material"
+        }, "SYSTEM")
+    end
+    
+    -- Create economy data
+    setItemEconomyData(itemID, laborCost, true, {"state", "national", "global"}, basePrice, 1.0)
+    
+    outputChatBox("Resource created: " .. name .. " (" .. itemID .. ")", player, 0, 255, 0)
+    outputChatBox("  Labor Cost: " .. laborCost .. " LP | Base Price: $" .. basePrice, player, 200, 200, 200)
+end)
+
+-- List economy resources
+addCommandHandler("listresources", function(player)
+    if not isDungeonMaster or not isDungeonMaster(player) then
+        outputChatBox("DM required", player, 255, 0, 0)
+        return
+    end
+    
+    outputChatBox("=== Economy Resources ===", player, 255, 255, 0)
+    
+    if database then
+        local query = dbQuery(database, "SELECT * FROM economy_items ORDER BY item_id")
+        local result = dbPoll(query, -1)
+        if result and #result > 0 then
+            for _, item in ipairs(result) do
+                outputChatBox(item.item_id .. " - Labor: " .. item.labor_cost .. " LP | Price: $" .. item.base_price, player, 200, 200, 200)
+            end
+        else
+            outputChatBox("No resources defined. Use /createresource to add some.", player, 200, 200, 200)
+        end
+    end
+end)
+
+-- Create economy recipe
+-- Create economy recipe (for manufacturing companies)
+addCommandHandler("createeconrecipe", function(player, cmd, recipeID, resultItem, resultQty, laborCost)
+    if not isDungeonMaster or not isDungeonMaster(player) then
+        outputChatBox("DM required", player, 255, 0, 0)
+        return
+    end
+    
+    if not recipeID or not resultItem then
+        outputChatBox("Usage: /createeconrecipe recipeID resultItem [resultQty] [laborCost]", player, 255, 255, 0)
+        outputChatBox("  Then use /addeconingredient to add required inputs", player, 200, 200, 200)
+        return
+    end
+    
+    resultQty = tonumber(resultQty) or 1
+    laborCost = tonumber(laborCost) or 8
+    
+    local success = createRecipe(recipeID, recipeID, "manufacturing", {}, {[resultItem] = resultQty}, laborCost)
+    
+    if success then
+        outputChatBox("Economy recipe created: " .. recipeID .. " -> " .. resultQty .. "x " .. resultItem, player, 0, 255, 0)
+        outputChatBox("Use /addeconingredient " .. recipeID .. " itemID qty to add inputs", player, 255, 255, 0)
+    else
+        outputChatBox("Failed to create recipe", player, 255, 0, 0)
+    end
+end)
+
+-- Add ingredient to economy recipe
+addCommandHandler("addeconingredient", function(player, cmd, recipeID, ingredientID, qty)
+    if not isDungeonMaster or not isDungeonMaster(player) then
+        outputChatBox("DM required", player, 255, 0, 0)
+        return
+    end
+    
+    if not recipeID or not ingredientID then
+        outputChatBox("Usage: /addeconingredient recipeID ingredientID [qty]", player, 255, 255, 0)
+        return
+    end
+    
+    qty = tonumber(qty) or 1
+    
+    -- Get existing recipe
+    local recipe = getRecipe(recipeID)
+    if not recipe then
+        outputChatBox("Recipe not found: " .. recipeID, player, 255, 0, 0)
+        return
+    end
+    
+    recipe.inputs[ingredientID] = qty
+    
+    -- Update in database
+    dbExec(database, "UPDATE economy_recipes SET inputs = ? WHERE id = ?", toJSON(recipe.inputs), recipeID)
+    
+    outputChatBox("Added ingredient: " .. qty .. "x " .. ingredientID .. " to " .. recipeID, player, 0, 255, 0)
+end)
+
+-- List economy recipes
+addCommandHandler("listeconrecipes", function(player)
+    if not isDungeonMaster or not isDungeonMaster(player) then
+        outputChatBox("DM required", player, 255, 0, 0)
+        return
+    end
+    
+    outputChatBox("=== Economy Recipes (Manufacturing) ===", player, 255, 255, 0)
+    
+    if database then
+        local query = dbQuery(database, "SELECT * FROM economy_recipes ORDER BY id")
+        local result = dbPoll(query, -1)
+        if result and #result > 0 then
+            for _, recipe in ipairs(result) do
+                local inputs = fromJSON(recipe.inputs) or {}
+                local outputs = fromJSON(recipe.outputs) or {}
+                
+                local inputStr = ""
+                for itemID, qty in pairs(inputs) do
+                    inputStr = inputStr .. qty .. "x" .. itemID .. " "
+                end
+                if inputStr == "" then inputStr = "(no inputs)" end
+                
+                local outputStr = ""
+                for itemID, qty in pairs(outputs) do
+                    outputStr = outputStr .. qty .. "x" .. itemID .. " "
+                end
+                
+                outputChatBox(recipe.id .. ": " .. inputStr .. "-> " .. outputStr, player, 200, 200, 200)
+            end
+        else
+            outputChatBox("No economy recipes defined. Use /createeconrecipe to add some.", player, 200, 200, 200)
+        end
     end
 end)
 

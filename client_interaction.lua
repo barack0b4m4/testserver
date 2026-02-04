@@ -76,8 +76,21 @@ local function getTargetType(element)
             return "shopkeeper"
         end
         return "ped"
+    elseif elementType == "marker" then
+        -- Check if it's a POI marker
+        local isPOI = getElementData(element, "isPOI")
+        outputDebugString("[DEBUG] Found marker! isPOI data: " .. tostring(isPOI) .. " (type: " .. type(isPOI) .. ")")
+        
+        -- Check both string "true" and boolean true
+        if isPOI == "true" or isPOI == true then
+            outputDebugString("[DEBUG] Marker identified as POI!")
+            return "poi"
+        end
+        return "marker"
     elseif elementType == "object" then
-        if getElementData(element, "isPOI") then
+        local isPOI = getElementData(element, "isPOI")
+        -- Check both string "true" and boolean true
+        if isPOI == "true" or isPOI == true then
             return "poi"
         elseif getElementData(element, "property.entrance") then
             return "property_entrance"
@@ -196,7 +209,13 @@ local function getPlayerMenuOptions(target, targetType)
             end
         })
     elseif targetType == "poi" then
-        -- POI interact is same as examine
+        -- Players can examine POIs
+        table.insert(options, {
+            label = "Examine",
+            action = function(t, tt)
+                triggerServerEvent("interaction:examine", localPlayer, t, tt)
+            end
+        })
     elseif targetType == "vehicle" then
         table.insert(options, {
             label = "Enter Vehicle",
@@ -206,8 +225,8 @@ local function getPlayerMenuOptions(target, targetType)
         })
     end
     
-    -- Examine option (available for most things)
-    if targetType ~= "world" then
+    -- Examine option (available for most things, but not POIs since they already have it)
+    if targetType ~= "world" and targetType ~= "poi" then
         table.insert(options, {
             label = "Examine",
             action = function(t, tt)
@@ -394,6 +413,75 @@ local function onClientClick(button, state, absX, absY, worldX, worldY, worldZ, 
     local target = clickedElement
     local targetType = getTargetType(clickedElement)
     
+    -- MARKER FIX: processLineOfSight doesn't detect markers, so check manually
+    -- If we didn't hit anything specific, check for nearby markers
+    if not target or targetType == "world" or targetType == "unknown" then
+        -- Get accurate world position using processLineOfSight
+        local cursorX, cursorY = getCursorPosition()
+        if cursorX then
+            cursorX, cursorY = cursorX * screenW, cursorY * screenH
+            
+            -- Get camera position
+            local camX, camY, camZ = getCameraMatrix()
+            
+            -- Get far point for ray
+            local farX, farY, farZ = getWorldFromScreenPosition(cursorX, cursorY, 300)
+            
+            -- Cast ray to find actual hit position
+            local hit, hitX, hitY, hitZ = processLineOfSight(
+                camX, camY, camZ,
+                farX, farY, farZ,
+                true, true, true, true, true, false, false, false
+            )
+            
+            -- Use hit position if we got one, otherwise use the passed worldX/Y/Z
+            local worldClickX, worldClickY, worldClickZ
+            if hit and hitX then
+                worldClickX, worldClickY, worldClickZ = hitX, hitY, hitZ
+            else
+                worldClickX, worldClickY, worldClickZ = worldX, worldY, worldZ
+            end
+            
+            -- Find closest marker within 3 meters of click position
+            local closestMarker = nil
+            local closestDist = 3.0  -- 3 meter search radius
+            
+            for _, marker in ipairs(getElementsByType("marker")) do
+                if isElement(marker) then
+                    local mx, my, mz = getElementPosition(marker)
+                    local dist = getDistanceBetweenPoints3D(worldClickX, worldClickY, worldClickZ, mx, my, mz)
+                    
+                    if dist < closestDist then
+                        -- Check if marker is in same dimension/interior
+                        local markerDim = getElementDimension(marker)
+                        local markerInt = getElementInterior(marker)
+                        local playerDim = getElementDimension(localPlayer)
+                        local playerInt = getElementInterior(localPlayer)
+                        
+                        if markerDim == playerDim and markerInt == playerInt then
+                            closestMarker = marker
+                            closestDist = dist
+                        end
+                    end
+                end
+            end
+            
+            if closestMarker then
+                target = closestMarker
+                targetType = getTargetType(closestMarker)
+                
+                -- DEBUG: Check what we found
+                outputChatBox("[DEBUG] Found marker! isPOI: " .. tostring(getElementData(closestMarker, "isPOI")), 255, 255, 0)
+                outputChatBox("[DEBUG] Target type returned: " .. targetType, 255, 255, 0)
+            end
+        end
+    end
+    
+    -- DEBUG: What are we working with?
+    if target and targetType ~= "world" then
+        outputChatBox("[DEBUG] Final target type: " .. targetType .. ", Element type: " .. getElementType(target), 200, 200, 200)
+    end
+    
     -- Store world position
     contextTarget = target
     contextTargetType = targetType
@@ -401,10 +489,14 @@ local function onClientClick(button, state, absX, absY, worldX, worldY, worldZ, 
     
     local options
     if isDMMode() then
+        outputChatBox("[DEBUG] Using DM menu", 0, 255, 255)
         options = getDMMenuOptions(target, targetType, worldX, worldY, worldZ)
     else
+        outputChatBox("[DEBUG] Using player menu", 0, 255, 255)
         options = getPlayerMenuOptions(target, targetType)
     end
+    
+    outputChatBox("[DEBUG] Generated " .. #options .. " menu options", 200, 200, 200)
     
     if #options > 0 then
         createContextMenu(absX, absY, options)

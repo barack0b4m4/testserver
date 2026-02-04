@@ -66,23 +66,18 @@ local function getPlayersInRange(player, range)
     for _, p in ipairs(getElementsByType("player")) do
         if p ~= player and isElement(p) then  -- Check element validity
             local success, tx, ty, tz = pcall(getElementPosition, p)
-            if not success then
-                -- Player disconnected mid-loop, skip
-                goto continue
-            end
-            
-            local tDim = getElementDimension(p)
-            local tInt = getElementInterior(p)
-            
-            -- Check same dimension and interior
-            if tDim == dimension and tInt == interior then
-                local distance = getDistanceBetweenPoints3D(px, py, pz, tx, ty, tz)
-                if distance <= range then
-                    table.insert(nearbyPlayers, {player = p, distance = distance})
+            if success then  -- Only process if getElementPosition worked
+                local tDim = getElementDimension(p)
+                local tInt = getElementInterior(p)
+                
+                -- Check same dimension and interior
+                if tDim == dimension and tInt == interior then
+                    local distance = getDistanceBetweenPoints3D(px, py, pz, tx, ty, tz)
+                    if distance <= range then
+                        table.insert(nearbyPlayers, {player = p, distance = distance})
+                    end
                 end
             end
-            
-            ::continue::
         end
     end
     

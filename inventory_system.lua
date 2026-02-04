@@ -1,3 +1,68 @@
+--[[
+================================================================================
+    INVENTORY_SYSTEM.LUA - Dynamic Item & Inventory Management
+================================================================================
+    Provides a complete item definition system and player inventory management.
+    Items are defined via DM commands and stored in the database.
+    
+    FEATURES:
+    - Database-driven item definitions (no hardcoded items)
+    - Item categories: weapon, armor, consumable, quest, material, resource, tool, misc
+    - Item qualities: Common, Uncommon, Rare, Epic, Legendary
+    - Stackable items with configurable stack sizes
+    - Usable items with effects (heal, armor, stat buffs)
+    - Equippable items (weapons, armor, accessories)
+    - Weight-based inventory with STR modifier integration
+    - Durability system for equipment
+    
+    RESOURCE CATEGORY:
+    The "resource" category is specifically for raw materials used in the
+    economic system (ore, crops, lumber, etc.). Resource companies can
+    produce these items using employee labor.
+    
+    INTEGRATION POINTS:
+    ┌─────────────────────────────────────────────────────────────────────────┐
+    │ DEPENDS ON:                                                             │
+    │   - server.lua: database connection, AccountManager                     │
+    │                                                                         │
+    │ PROVIDES TO:                                                            │
+    │   - crafting_system.lua: ItemRegistry for recipe validation             │
+    │   - shopkeeper_system.lua: Item data for shop displays                  │
+    │   - economic_system.lua: Resource items for company production          │
+    │   - server.lua: initializePlayerInventory() called on spawn             │
+    │   - dice_system.lua: Equipment bonuses for stat rolls                   │
+    │                                                                         │
+    │ GLOBAL EXPORTS:                                                         │
+    │   - ItemRegistry: Item definition management singleton                  │
+    │   - PlayerInventories: Per-player inventory data                        │
+    │   - ITEM_CATEGORY: Category constants                                   │
+    │   - ITEM_QUALITY: Quality tier definitions                              │
+    │   - initializePlayerInventory(player, charID, maxWeight)                │
+    │   - savePlayerInventory(player)                                         │
+    │   - getPlayerInventory(player)                                          │
+    │   - addItemToInventory(player, itemID, qty)                             │
+    │   - removeItemFromInventory(player, itemID, qty)                        │
+    │   - getInventoryForClient(player)                                       │
+    └─────────────────────────────────────────────────────────────────────────┘
+    
+    DM COMMANDS:
+    - /createitem "Name" category [options]
+    - /edititem itemID [options]
+    - /deleteitem itemID
+    - /listitems [category] [search]
+    - /iteminfo itemID
+    - /giveitem itemID [qty] [player]
+    
+    PLAYER COMMANDS:
+    - /inv - View inventory
+    - /use [slot] - Use consumable
+    - /equip [slot] - Equip item
+    - /unequip [slot] - Unequip item
+    - /drop [slot] [qty] - Drop item
+    - /equipped - Show equipped items
+================================================================================
+]]
+
 -- inventory_system.lua (SERVER)
 -- Dynamic D&D-style inventory system with database-driven item definitions
 -- Items are created via commands and stored in the database
@@ -16,6 +81,8 @@ ITEM_CATEGORY = {
     CONSUMABLE = "consumable",
     QUEST = "quest",
     MATERIAL = "material",
+    RESOURCE = "resource",  -- Raw materials for economy system (ore, crops, lumber, etc.)
+    VEHICLE = "vehicle",    -- Vehicle items - cannot be stored in inventory, spawn as owned vehicle on purchase
     TOOL = "tool",
     MISC = "misc"
 }
@@ -828,11 +895,11 @@ addEventHandler("itemcreator:createItem", root, function(itemData)
     itemData.id = itemData.name:lower():gsub("%s+", "_"):gsub("[^a-z0-9_]", "")
     
     -- Apply category-specific defaults
-    if itemData.category == "armor" or itemData.armorValue > 0 then
+    if itemData.category == "armor" or (itemData.armorValue and itemData.armorValue > 0) then
         itemData.equippable = true
     end
     
-    if itemData.category == "weapon" or itemData.weaponID > 0 then
+    if itemData.category == "weapon" or (itemData.weaponID and itemData.weaponID > 0) then
         itemData.equippable = true
     end
     
@@ -844,6 +911,10 @@ addEventHandler("itemcreator:createItem", root, function(itemData)
     end
     
     if itemData.category == "material" and not itemData.stackable then
+        itemData.stackable = true
+    end
+    
+    if itemData.category == "resource" and not itemData.stackable then
         itemData.stackable = true
     end
     

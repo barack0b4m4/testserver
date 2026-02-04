@@ -44,8 +44,18 @@
     <!-- GLOBAL EXPORTS: isDungeonMaster(), NPCs table -->
     <script src="dungeon_master.lua" type="server" />
     
-    <!-- Shopkeeper System: Shop NPCs, buy/sell, CHA price modifiers -->
-    <!-- DEPENDS ON: server.lua, inventory_system.lua, dungeon_master.lua -->
+    <!-- Property System: Building interiors, ownership, entry/exit -->
+    <!-- DEPENDS ON: server.lua (database, AccountManager) -->
+    <!-- GLOBAL EXPORTS: Properties, PropertyMarkers, createProperty(), canAccessProperty() -->
+    <script src="property_system.lua" type="server" />
+    
+    <!-- Vehicle System: Vehicle ownership, locking, storage -->
+    <!-- DEPENDS ON: server.lua (database, AccountManager) -->
+    <!-- GLOBAL EXPORTS: OwnedVehicles, VehicleElements, createOwnedVehicle(), spawnVehicleFromItem() -->
+    <script src="vehicle_system.lua" type="server" />
+    
+    <!-- Shopkeeper System: Shop NPCs, buy/sell, CHA price modifiers, vehicle purchases -->
+    <!-- DEPENDS ON: server.lua, inventory_system.lua, dungeon_master.lua, vehicle_system.lua -->
     <!-- GLOBAL EXPORTS: Shops table, shop functions -->
     <script src="shopkeeper_system.lua" type="server" />
     
@@ -57,11 +67,6 @@
     <!-- Proximity Chat: RP chat with ranges, /me, /do, /whisper, etc. -->
     <!-- DEPENDS ON: server.lua (AccountManager for character names) -->
     <script src="proximity_chat.lua" type="server" />
-    
-    <!-- Property System: Building interiors, ownership, entry/exit -->
-    <!-- DEPENDS ON: server.lua (database, AccountManager) -->
-    <!-- GLOBAL EXPORTS: Properties, PropertyMarkers, createProperty() -->
-    <script src="property_system.lua" type="server" />
     
     <!-- Interaction System Server: POIs, examination, descriptions -->
     <!-- DEPENDS ON: server.lua, dungeon_master.lua, property_system.lua -->

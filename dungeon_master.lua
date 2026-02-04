@@ -1,16 +1,62 @@
+--[[
+================================================================================
+    DUNGEON_MASTER.LUA - Dungeon Master Permissions & Tools
+================================================================================
+    Manages DM permissions and provides DM-specific tools like NPC control,
+    forced rolls, and DM mode (noclip, invisibility).
+    
+    FEATURES:
+    - Persistent DM permissions stored in database
+    - NPC spawning and control (speak, emote, roll)
+    - Forced player rolls
+    - DM mode with flying and invisibility
+    - First player auto-promoted to DM if no DMs exist
+    
+    INTEGRATION POINTS:
+    ┌─────────────────────────────────────────────────────────────────────────┐
+    │ DEPENDS ON:                                                             │
+    │   - server.lua: database, AccountManager                                │
+    │                                                                         │
+    │ PROVIDES TO:                                                            │
+    │   - ALL OTHER SCRIPTS: isDungeonMaster(player) function                 │
+    │   - client_dmfly.lua: DM mode state for flying                          │
+    │   - client_interaction.lua: DM mode state for context menus             │
+    │   - client_npc_names.lua: NPC data for name display                     │
+    │                                                                         │
+    │ GLOBAL EXPORTS:                                                         │
+    │   - isDungeonMaster(player): Check if player has DM permissions         │
+    │   - NPCs: Table of all active NPCs keyed by ID                          │
+    │   - DungeonMasters: Set of DM usernames                                 │
+    └─────────────────────────────────────────────────────────────────────────┘
+    
+    ELEMENT DATA SET:
+    - player "isDungeonMaster": true if player is a DM
+    - player "dm.mode": true if DM mode is active
+    - ped "isNPC": true for DM-spawned NPCs
+    - ped "npc.id": NPC identifier
+    - ped "npc.name": NPC display name
+    
+    DM COMMANDS:
+    - /dm - Toggle DM mode (fly, invisibility)
+    - /spawnnpc [name] [skinID] - Spawn NPC at position
+    - /despawnnpc [npcID] - Remove NPC
+    - /npcsay [npcID] [message] - Make NPC speak
+    - /npcme [npcID] [action] - Make NPC emote
+    - /npcroll [npcID] [stat] [DC] - Make NPC roll
+    - /listnpcs - List all NPCs
+    - /forceroll [player] [stat] [DC] - Force player to roll
+    - /adddm [username] - Grant DM permissions
+    - /removedm [username] - Remove DM permissions
+    - /listdms - List all DMs
+================================================================================
+]]
+
 -- dungeon_master.lua (SERVER)
 -- Dungeon Master system with SQLite permissions storage
 
 outputServerLog("===== DUNGEON_MASTER.LUA LOADING =====")
 
 local db = nil
-
--- MAKE THESE GLOBAL so shopkeeper_system.lua can access them
-NPCs = NPCs or {}
-NPCElements = NPCElements or {}
-
--- DM Flying
-DMFlying = DMFlying or {}
 
 addEventHandler("onResourceStart", resourceRoot, function()
     db = database
@@ -99,7 +145,8 @@ end
 -- NPC MANAGEMENT
 --------------------------------------------------------------------------------
 
--- NPCs and NPCElements are now GLOBAL (declared at top of file)
+local NPCs = {}
+local NPCElements = {}
 
 NPC = {}
 NPC.__index = NPC
@@ -167,63 +214,8 @@ function generateNPCID()
     return "npc_" .. npcIDCounter
 end
 
--- Helper: Find NPC by ID or name (case-insensitive, partial match)
--- Also searches shopkeeper NPCs by name
-function findNPCByIDOrName(identifier)
-    if not identifier or identifier == "" then
-        return nil
-    end
-    
-    -- First try exact ID match
-    if NPCs[identifier] then
-        return NPCs[identifier]
-    end
-    
-    -- Try shopkeeper ID match (e.g., "shopkeeper_shop_123456")
-    if identifier:find("^shopkeeper_") then
-        if ShopNPCs then
-            for shopID, ped in pairs(ShopNPCs) do
-                if isElement(ped) and getElementData(ped, "npc.id") == identifier then
-                    local npc = NPCs[identifier]
-                    if npc then
-                        NPCElements[identifier] = ped
-                        return npc
-                    end
-                end
-            end
-        end
-    end
-    
-    -- Try name match (case-insensitive, partial)
-    local searchLower = identifier:lower()
-    
-    -- Search regular NPCs
-    for id, npc in pairs(NPCs) do
-        if npc.name:lower():find(searchLower, 1, true) then
-            return npc
-        end
-    end
-    
-    -- Search shopkeeper NPCs by name (check element data)
-    if ShopNPCs then
-        for shopID, ped in pairs(ShopNPCs) do
-            if isElement(ped) then
-                local shopName = getElementData(ped, "shop.name") or getElementData(ped, "npc.name")
-                if shopName and shopName:lower():find(searchLower, 1, true) then
-                    local npcID = getElementData(ped, "npc.id")
-                    if npcID and NPCs[npcID] then
-                        return NPCs[npcID]
-                    end
-                end
-            end
-        end
-    end
-    
-    return nil
-end
-
 function getNPC(id)
-    return findNPCByIDOrName(id)
+    return NPCs[id]
 end
 
 function createNPC(name, skin, stats)
@@ -333,10 +325,11 @@ addCommandHandler("dm", function(player)
     dmMode = not dmMode
     setElementData(player, "dm.mode", dmMode)
     
-    outputChatBox("DM Mode: " .. (dmMode and "ON" or "OFF"), player, dmMode and {0, 255, 0} or {255, 0, 0})
-    
     if dmMode then
-        outputChatBox("DM Commands: /spawnnpc, /despawnnpc, /npcsay, /npcme, /npcroll, /forceroll, /dmfly", player, 255, 255, 0)
+        outputChatBox("DM Mode: ON", player, 0, 255, 0)
+        outputChatBox("DM Commands: /spawnnpc, /despawnnpc, /npcsay, /npcme, /npcroll, /forceroll", player, 255, 255, 0)
+    else
+        outputChatBox("DM Mode: OFF", player, 255, 0, 0)
     end
 end)
 
@@ -372,7 +365,6 @@ addCommandHandler("spawnnpc", function(player, cmd, name, skinID)
     
     if success then
         outputChatBox("NPC spawned: " .. name .. " (ID: " .. npc.id .. ")", player, 0, 255, 0)
-        outputChatBox("You can now use /npcsay " .. name .. " [message] to make them speak!", player, 200, 200, 200)
     else
         outputChatBox("Failed to spawn NPC: " .. tostring(result), player, 255, 0, 0)
     end
@@ -385,18 +377,18 @@ addCommandHandler("despawnnpc", function(player, cmd, npcID)
     end
     
     if not npcID then
-        outputChatBox("Usage: /despawnnpc [NPC name or ID]", player, 255, 255, 0)
+        outputChatBox("Usage: /despawnnpc [NPC ID]", player, 255, 255, 0)
         return
     end
     
     local npc = getNPC(npcID)
     if not npc then
-        outputChatBox("NPC not found. Try /listnpcs to see all NPCs", player, 255, 0, 0)
+        outputChatBox("NPC not found", player, 255, 0, 0)
         return
     end
     
     if npc:despawn() then
-        NPCs[npc.id] = nil
+        NPCs[npcID] = nil
         outputChatBox("NPC despawned: " .. npc.name, player, 0, 255, 0)
     else
         outputChatBox("Failed to despawn NPC", player, 255, 0, 0)
@@ -410,7 +402,7 @@ addCommandHandler("npcsay", function(player, cmd, npcID, ...)
     end
     
     if not npcID then
-        outputChatBox("Usage: /npcsay [NPC name or ID] [message]", player, 255, 255, 0)
+        outputChatBox("Usage: /npcsay [NPC ID] [message]", player, 255, 255, 0)
         return
     end
     
@@ -433,7 +425,7 @@ addCommandHandler("npcme", function(player, cmd, npcID, ...)
     end
     
     if not npcID then
-        outputChatBox("Usage: /npcme [NPC name or ID] [action]", player, 255, 255, 0)
+        outputChatBox("Usage: /npcme [NPC ID] [action]", player, 255, 255, 0)
         return
     end
     
@@ -456,7 +448,7 @@ addCommandHandler("npcroll", function(player, cmd, npcID, stat, dc)
     end
     
     if not npcID or not stat or not dc then
-        outputChatBox("Usage: /npcroll [NPC name or ID] [stat] [DC]", player, 255, 255, 0)
+        outputChatBox("Usage: /npcroll [NPC ID] [stat] [DC]", player, 255, 255, 0)
         return
     end
     
@@ -534,43 +526,18 @@ addCommandHandler("listnpcs", function(player)
         return
     end
     
-    outputChatBox("=== Active NPCs and Shopkeepers ===", player, 255, 255, 0)
+    outputChatBox("=== Active NPCs ===", player, 255, 255, 0)
     
     local count = 0
-    
-    -- List regular NPCs
     for id, npc in pairs(NPCs) do
         local ped = npc:getPed()
         local status = (ped and isElement(ped)) and "ALIVE" or "DESPAWNED"
-        
-        -- Check if it's a shopkeeper
-        local isShopkeeper = id:find("^shopkeeper_") and true or false
-        local type_str = isShopkeeper and "[SHOPKEEPER]" or "[NPC]"
-        
-        outputChatBox(string.format("%s %s - ID: %s (%s)", type_str, npc.name, id, status), player, 255, 255, 255)
+        outputChatBox(string.format("%s - %s [%s]", id, npc.name, status), player, 255, 255, 255)
         count = count + 1
     end
     
-    -- Also list shopkeepers directly from global ShopNPCs table
-    if ShopNPCs and next(ShopNPCs) then
-        for shopID, ped in pairs(ShopNPCs) do
-            if isElement(ped) then
-                local npcID = getElementData(ped, "npc.id")
-                -- Only show if not already listed
-                if npcID and not NPCs[npcID] then
-                    local shopName = getElementData(ped, "shop.name") or "Unknown Shop"
-                    outputChatBox(string.format("[SHOPKEEPER] %s - ID: %s (ALIVE)", shopName, npcID), player, 0, 200, 255)
-                    count = count + 1
-                end
-            end
-        end
-    end
-    
     if count == 0 then
-        outputChatBox("No NPCs or shopkeepers active", player, 200, 200, 200)
-    else
-        outputChatBox("You can use NPC/Shopkeeper names in commands (case-insensitive, partial match)", player, 200, 200, 200)
-        outputChatBox("Examples: /npcsay Bob Hello | /npcme merchant waves | /npcroll bob str 15", player, 150, 150, 150)
+        outputChatBox("No NPCs active", player, 200, 200, 200)
     end
 end)
 
@@ -611,49 +578,6 @@ addCommandHandler("removedm", function(player, cmd, username)
     outputChatBox("Removed " .. username .. " from Dungeon Masters", player, 0, 255, 0)
 end)
 
-addCommandHandler("mypos", function(player)
-    if not isDungeonMaster(player) then
-        outputChatBox("You are not a Dungeon Master", player, 255, 0, 0)
-        return
-    end
-    
-    local x, y, z = getElementPosition(player)
-    local int = getElementInterior(player)
-    local dim = getElementDimension(player)
-    outputChatBox(string.format("Position: X: %.2f, Y: %.2f, Z: %.2f | Interior: %d | Dimension: %d", x, y, z, int, dim), player, 255, 255, 0)
-end)
-
-addCommandHandler("dmfly", function(player)
-    if not isDungeonMaster(player) then
-        outputChatBox("You are not a Dungeon Master", player, 255, 0, 0)
-        return
-    end
-    
-    if DMFlying[player] then
-        -- Disable flying
-        DMFlying[player] = false
-        setElementCollisionsEnabled(player, true)
-        triggerClientEvent(player, "dmfly:stop", player)
-        return
-    end
-    
-    -- Enable flying
-    DMFlying[player] = true
-    setElementCollisionsEnabled(player, false)
-    triggerClientEvent(player, "dmfly:start", player)
-end)
-
--- Handle landing from client
-addEvent("dmfly:land", true)
-addEventHandler("dmfly:land", root, function()
-    local player = client
-    if DMFlying[player] then
-        DMFlying[player] = false
-        setElementCollisionsEnabled(player, true)
-        triggerClientEvent(player, "dmfly:stop", player)
-    end
-end)
-
 --------------------------------------------------------------------------------
 -- CLEANUP
 --------------------------------------------------------------------------------
@@ -662,13 +586,6 @@ addEventHandler("onResourceStop", resourceRoot, function()
     for id, npc in pairs(NPCs) do
         npc:despawn()
     end
-end)
-
-addEventHandler("onPlayerQuit", root, function()
-    if DMFlying[source] then
-        setElementCollisionsEnabled(source, true)
-    end
-    DMFlying[source] = nil
 end)
 
 outputServerLog("===== DUNGEON_MASTER.LUA LOADED =====")

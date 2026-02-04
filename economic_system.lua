@@ -322,6 +322,9 @@ local function saveEconomyState()
         GlobalEconomy.markets.global.money, GlobalEconomy.markets.national.money, GlobalEconomy.markets.state.money)
 end
 
+-- Make globally accessible
+_G.saveEconomyState = saveEconomyState
+
 --------------------------------------------------------------------------------
 -- SECTION 4: COMPANY MANAGEMENT
 --------------------------------------------------------------------------------
