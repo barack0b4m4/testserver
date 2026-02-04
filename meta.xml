@@ -82,6 +82,10 @@
     <!-- DEPENDS ON: economic_system.lua -->
     <script src="economic_cycle.lua" type="server" />
     
+    <script src="player_trading.lua" type="server" />
+    
+    <script src="world_items.lua" type="server" />
+    
     <!-- ================================================================== -->
     <!-- CLIENT SCRIPTS - GUI and client-side features                      -->
     <!-- ================================================================== -->
@@ -118,6 +122,9 @@
     
     <!-- DM Flying Mode (noclip for DMs) -->
     <script src="client_dmfly.lua" type="client" />
+
+    <!-- Item Trading -->
+    <script src="client_trading.lua" type="client" />
     
     <!-- ================================================================== -->
     <!-- RESOURCE SETTINGS                                                  -->
